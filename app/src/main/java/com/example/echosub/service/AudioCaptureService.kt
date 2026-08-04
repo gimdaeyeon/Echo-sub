@@ -1,0 +1,567 @@
+package com.example.echosub.service
+
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.app.Service
+import android.content.Context
+import android.content.Intent
+import android.content.pm.ServiceInfo
+import android.media.projection.MediaProjection
+import android.media.projection.MediaProjectionManager
+import android.os.Build
+import android.os.Handler
+import android.os.IBinder
+import android.os.Looper
+import android.provider.Settings
+import android.util.Log
+import androidx.core.app.NotificationCompat
+import androidx.core.app.ServiceCompat
+import com.example.echosub.MainActivity
+import com.example.echosub.R
+import com.example.echosub.capture.CaptureFormat
+import com.example.echosub.capture.PcmDownsampler
+import com.example.echosub.capture.PlaybackAudioRecorder
+import com.example.echosub.capture.WavFileWriter
+import com.example.echosub.capture.bytesPerFrame
+import com.example.echosub.data.AppSettings
+import com.example.echosub.device.AppForegroundState
+import com.example.echosub.overlay.OverlaySettings
+import com.example.echosub.overlay.SubtitleOverlay
+import com.example.echosub.stt.SttStreamingClient
+import com.example.echosub.subtitle.SubtitleRecorder
+import com.example.echosub.subtitle.subtitleFileFor
+import com.example.echosub.stt.TranscriptState
+import com.example.echosub.translate.DeepLTranslator
+import com.example.echosub.translate.LanguagePair
+import com.example.echosub.translate.MlKitTranslator
+import com.example.echosub.translate.TranslationEngine
+import com.example.echosub.translate.TranslationFailedException
+import com.example.echosub.translate.Translator
+import com.example.echosub.translate.TranslatorUnavailableException
+import com.example.echosub.util.enumByName
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.mapNotNull
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Locale
+import java.util.concurrent.atomic.AtomicLong
+import kotlin.math.sqrt
+
+/**
+ * Phase 1 파이프라인 전체를 orchestration 하는 Foreground Service.
+ *
+ * Android 14+(API 34) 요구사항 때문에 순서가 매우 중요하다:
+ *   1) startForeground()를 먼저 호출해 FGS 상태를 확정
+ *   2) 그 다음에만 MediaProjectionManager.getMediaProjection() 호출 가능
+ *   3) MediaProjection.Callback 등록 필수 (미등록 시 캡처 중 예외)
+ *   4) 프로젝션 토큰은 1회용 — stop 후 재시작하려면 동의 다이얼로그를 다시 띄워야 함 → START_NOT_STICKY
+ */
+class AudioCaptureService : Service() {
+
+    companion object {
+        private const val TAG = "AudioCaptureService"
+        private const val NOTIFICATION_CHANNEL_ID = "capture_channel"
+        private const val NOTIFICATION_ID = 1001
+
+        /** Google STT 스트리밍에 보내는 오디오 포맷 — 캡처 포맷과 무관하게 항상 이 값이다. */
+        private const val STT_SAMPLE_RATE = 16_000
+
+        const val ACTION_START = "com.example.echosub.action.START"
+        const val ACTION_STOP = "com.example.echosub.action.STOP"
+        const val ACTION_PAUSE_STT = "com.example.echosub.action.PAUSE_STT"
+        const val ACTION_RESUME_STT = "com.example.echosub.action.RESUME_STT"
+
+        private const val EXTRA_RESULT_CODE = "extra_result_code"
+        private const val EXTRA_DATA = "extra_data"
+        private const val EXTRA_FORMAT = "extra_format"
+        private const val EXTRA_SAVE_16K_COMPANION = "extra_save_16k_companion"
+        private const val EXTRA_STT_ENABLED = "extra_stt_enabled"
+        private const val EXTRA_LANGUAGE_PAIR = "extra_language_pair"
+        private const val EXTRA_TRANSLATION_ENGINE = "extra_translation_engine"
+        private const val EXTRA_OVERLAY_ENABLED = "extra_overlay_enabled"
+
+        fun buildStartIntent(
+            context: Context,
+            resultCode: Int,
+            data: Intent,
+            format: CaptureFormat,
+            save16kCompanion: Boolean,
+            sttEnabled: Boolean,
+            languagePair: LanguagePair,
+            translationEngine: TranslationEngine,
+            overlayEnabled: Boolean,
+        ): Intent = Intent(context, AudioCaptureService::class.java).apply {
+            action = ACTION_START
+            putExtra(EXTRA_RESULT_CODE, resultCode)
+            putExtra(EXTRA_DATA, data)
+            putExtra(EXTRA_FORMAT, format.name)
+            putExtra(EXTRA_SAVE_16K_COMPANION, save16kCompanion)
+            putExtra(EXTRA_STT_ENABLED, sttEnabled)
+            putExtra(EXTRA_LANGUAGE_PAIR, languagePair.name)
+            putExtra(EXTRA_TRANSLATION_ENGINE, translationEngine.name)
+            putExtra(EXTRA_OVERLAY_ENABLED, overlayEnabled)
+        }
+
+        fun buildStopIntent(context: Context): Intent =
+            Intent(context, AudioCaptureService::class.java).apply { action = ACTION_STOP }
+
+        /** STT 스트림만 끊는다 — 오디오 캡처/녹화는 계속된다. 무음 구간에서 STT 사용료를 아끼기 위한 것. */
+        fun buildPauseSttIntent(context: Context): Intent =
+            Intent(context, AudioCaptureService::class.java).apply { action = ACTION_PAUSE_STT }
+
+        fun buildResumeSttIntent(context: Context): Intent =
+            Intent(context, AudioCaptureService::class.java).apply { action = ACTION_RESUME_STT }
+    }
+
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private var captureJob: Job? = null
+
+    private var projection: MediaProjection? = null
+    private var projectionCallback: MediaProjection.Callback? = null
+    private var recorder: PlaybackAudioRecorder? = null
+
+    private var primaryWriter: WavFileWriter? = null
+    private var companionWriter: WavFileWriter? = null
+    private var downsampler: PcmDownsampler? = null
+
+    @Volatile
+    private var subtitleRecorder: SubtitleRecorder? = null
+
+    /**
+     * 지금까지 캡처한 프레임 수 = 녹음 파일의 재생 시각. 캡처 루프(IO)가 쓰고
+     * STT 콜백 스레드가 읽으므로 원자적으로 다룬다.
+     */
+    private val capturedFrames = AtomicLong(0)
+    private var captureBytesPerFrame = 2
+    private var captureSampleRate = STT_SAMPLE_RATE
+
+    /** 녹음 파일 기준 현재 위치(ms). 자막에 붙일 시각의 기준. */
+    private fun audioPositionMs(): Long =
+        capturedFrames.get() * 1_000L / captureSampleRate
+
+    @Volatile
+    private var sttClient: SttStreamingClient? = null
+
+    @Volatile
+    private var translator: Translator? = null
+
+    // 일시정지 후 재개할 때 새 SttStreamingClient를 그대로 다시 만들기 위해 기억해둔다.
+    private var activeLanguagePair: LanguagePair? = null
+
+    private var overlay: SubtitleOverlay? = null
+
+    override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // 저장된 자막 크기를 OverlaySettings에 실어두기 위한 것. 이미 초기화됐으면 no-op.
+        AppSettings.init(this)
+        when (intent?.action) {
+            ACTION_START -> handleStart(intent)
+            ACTION_STOP -> handleStop()
+            ACTION_PAUSE_STT -> handlePauseStt()
+            ACTION_RESUME_STT -> handleResumeStt()
+            else -> Log.w(TAG, "unknown or null action: ${intent?.action}")
+        }
+        // MediaProjection 토큰은 1회용이므로 시스템이 서비스를 재생성해도 재개할 수 없다.
+        return START_NOT_STICKY
+    }
+
+    private fun handleStart(intent: Intent) {
+        if (recorder != null) {
+            Log.w(TAG, "capture already running, ignoring duplicate ACTION_START")
+            return
+        }
+
+        createNotificationChannel()
+        ServiceCompat.startForeground(
+            this,
+            NOTIFICATION_ID,
+            buildNotification(),
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION,
+        )
+
+        val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, 0)
+        val data = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            intent.getParcelableExtra(EXTRA_DATA, Intent::class.java)
+        } else {
+            @Suppress("DEPRECATION")
+            intent.getParcelableExtra(EXTRA_DATA)
+        }
+        if (data == null) {
+            failAndStop("MediaProjection data intent가 없습니다")
+            return
+        }
+
+        val format = enumByName(intent.getStringExtra(EXTRA_FORMAT), CaptureFormat.HIFI)
+        val save16kCompanion = intent.getBooleanExtra(EXTRA_SAVE_16K_COMPANION, false) &&
+            format == CaptureFormat.HIFI
+
+        val mpm = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+        val proj = try {
+            mpm.getMediaProjection(resultCode, data)
+        } catch (e: SecurityException) {
+            failAndStop("MediaProjection 획득 실패: ${e.message}")
+            return
+        }
+        projection = proj
+
+        val callback = object : MediaProjection.Callback() {
+            override fun onStop() {
+                Log.i(TAG, "MediaProjection.Callback.onStop() — 캡처 세션 종료됨")
+                stopCaptureAndSelf()
+            }
+        }
+        proj.registerCallback(callback, Handler(Looper.getMainLooper()))
+        projectionCallback = callback
+
+        val newRecorder = PlaybackAudioRecorder(proj, format)
+        try {
+            newRecorder.start()
+        } catch (e: IllegalStateException) {
+            failAndStop("오디오 캡처 시작 실패: ${e.message}")
+            return
+        }
+        recorder = newRecorder
+
+        val sttEnabled = intent.getBooleanExtra(EXTRA_STT_ENABLED, false)
+
+        val outputDir = File(getExternalFilesDir(null), "captures").apply { mkdirs() }
+        val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(java.util.Date())
+        val outputPaths = mutableListOf<String>()
+
+        val primaryFile = File(outputDir, "capture_${timestamp}_${format.sampleRate / 1000}k_${channelLabel(format)}.wav")
+        primaryWriter = WavFileWriter(primaryFile, format.sampleRate, format.channelCount)
+        outputPaths += primaryFile.absolutePath
+
+        // STT는 16kHz 모노만 받는다. 원본이 그보다 크면 실시간으로 변환해서 보내고
+        // 파일에는 원본을 그대로 쓴다 — 덕분에 원음 녹음과 번역을 동시에 할 수 있다.
+        // 같은 변환 결과를 16k 동반 파일 저장도 함께 쓴다 (두 번 변환할 이유가 없다).
+        if (format != CaptureFormat.STT_READY && (sttEnabled || save16kCompanion)) {
+            downsampler = PcmDownsampler(inputSampleRate = format.sampleRate, outputSampleRate = STT_SAMPLE_RATE)
+        }
+
+        if (save16kCompanion) {
+            val companionFile = File(outputDir, "capture_${timestamp}_16k_mono.wav")
+            companionWriter = WavFileWriter(companionFile, STT_SAMPLE_RATE, 1)
+            outputPaths += companionFile.absolutePath
+        }
+
+        // 자막을 재생 시점에 맞춰 띄우려면 "녹음 파일 기준 몇 초 지점인지"가 필요하다.
+        // 캡처한 프레임 수가 곧 그 시계다 (벽시계는 STT 응답 지연 때문에 못 쓴다).
+        capturedFrames.set(0)
+        captureBytesPerFrame = format.bytesPerFrame()
+        captureSampleRate = format.sampleRate
+
+        CaptureState.update {
+            CaptureState.Status(
+                isRunning = true,
+                format = format,
+                outputPaths = outputPaths,
+            )
+        }
+
+        if (sttEnabled) {
+            val languagePair = enumByName(intent.getStringExtra(EXTRA_LANGUAGE_PAIR), LanguagePair.EN_TO_KO)
+            val engine = enumByName(intent.getStringExtra(EXTRA_TRANSLATION_ENGINE), TranslationEngine.ML_KIT)
+
+            activeLanguagePair = languagePair
+
+            // 자막은 화면 표시용 TranscriptState와 별개로 여기에 전부 모아 파일로 남긴다
+            // (TranscriptState는 최근 50문장만 유지하므로 긴 녹음이면 앞부분이 잘린다).
+            subtitleRecorder = SubtitleRecorder(subtitleFileFor(primaryFile))
+
+            TranscriptState.reset()
+
+            // 번역기 준비(모델 다운로드/키 검증)는 STT 연결과 별개로 병렬로 진행한다 —
+            // 어느 쪽이 실패해도 다른 쪽은 계속 동작해야 한다 (번역 실패해도 인식 결과는 봐야 함).
+            serviceScope.launch(Dispatchers.IO) {
+                val newTranslator: Translator = when (engine) {
+                    TranslationEngine.ML_KIT -> MlKitTranslator(languagePair)
+                    TranslationEngine.DEEPL -> DeepLTranslator(languagePair)
+                }
+                try {
+                    newTranslator.prepare()
+                    translator = newTranslator
+                } catch (e: TranslatorUnavailableException) {
+                    Log.w(TAG, "번역기 준비 실패 — 인식 결과만 표시", e)
+                    TranscriptState.update { it.copy(translatorMessage = e.message) }
+                }
+            }
+
+            startSttClient(languagePair)
+
+            val overlayEnabled = intent.getBooleanExtra(EXTRA_OVERLAY_ENABLED, false)
+            if (overlayEnabled && Settings.canDrawOverlays(this)) {
+                // handleStart()는 onStartCommand()를 통해 항상 메인 스레드에서 호출되므로
+                // show()를 바로 불러도 안전하다. 이후 갱신은 Dispatchers.Main으로 명시해야 한다 —
+                // WindowManager 호출은 메인 스레드 전용이고, 아래 Flow들은 IO 코루틴에서도 값을 emit한다.
+                val ov = SubtitleOverlay(
+                    context = this,
+                    onOpenApp = { openMainActivity() },
+                    onTogglePause = { toggleSttFromOverlay() },
+                )
+                ov.show()
+                overlay = ov
+
+                serviceScope.launch(Dispatchers.Main) {
+                    OverlaySettings.textSizeSp.collect { ov.setTextSize(it) }
+                }
+                serviceScope.launch(Dispatchers.Main) {
+                    OverlaySettings.boxWidthDp.collect { ov.setBoxWidth(it) }
+                }
+                serviceScope.launch(Dispatchers.Main) {
+                    // 앱 화면에 이미 자막이 보이는 동안에는 오버레이를 숨긴다.
+                    AppForegroundState.isForeground.collect { inForeground -> ov.setVisible(!inForeground) }
+                }
+                serviceScope.launch(Dispatchers.Main) {
+                    TranscriptState.status
+                        .mapNotNull { it.finalEntries.lastOrNull { e -> e.translatedText != null }?.translatedText }
+                        .distinctUntilChanged()
+                        .collect { ov.setText(it) }
+                }
+                serviceScope.launch(Dispatchers.Main) {
+                    TranscriptState.status
+                        .map { it.connectionState == TranscriptState.ConnectionState.PAUSED }
+                        .distinctUntilChanged()
+                        .collect { ov.setPaused(it) }
+                }
+            }
+        }
+
+        val startedAt = System.currentTimeMillis()
+        captureJob = serviceScope.launch(Dispatchers.IO) {
+            runCaptureLoop(newRecorder, startedAt)
+        }
+    }
+
+    private suspend fun CoroutineScope.runCaptureLoop(recorder: PlaybackAudioRecorder, startedAt: Long) {
+        val buffer = ByteArray(recorder.chunkBytes)
+        var totalBytes = 0L
+
+        while (isActive) {
+            val n = recorder.read(buffer)
+            if (n > 0) {
+                primaryWriter?.write(buffer, 0, n)
+
+                // 파일에 쓴 만큼 오디오 시계를 먼저 진행시킨다 — STT가 결과에 붙이는
+                // 시각의 기준점이라 청크를 보내기 전에 갱신돼 있어야 한다.
+                capturedFrames.addAndGet((n / captureBytesPerFrame).toLong())
+
+                val ds = downsampler
+                if (ds == null) {
+                    // 이미 16kHz 모노로 캡처 중 — 변환 없이 그대로 보낸다.
+                    sttClient?.sendAudioChunk(buffer, n)
+                } else {
+                    val converted = ds.process(buffer, n)
+                    if (converted.isNotEmpty()) {
+                        sttClient?.sendAudioChunk(converted, converted.size)
+                        companionWriter?.write(converted, 0, converted.size)
+                    }
+                }
+
+                totalBytes += n
+                val rms = computeRms(buffer, n)
+                CaptureState.update {
+                    it.copy(
+                        elapsedMs = System.currentTimeMillis() - startedAt,
+                        bytesWritten = totalBytes,
+                        rmsLevel = rms,
+                    )
+                }
+            } else if (n < 0) {
+                Log.e(TAG, "AudioRecord.read returned error code $n")
+                CaptureState.update { it.copy(errorMessage = "AudioRecord 읽기 오류 (code=$n)") }
+                break
+            }
+        }
+    }
+
+    /**
+     * STT 확정 결과 하나를 번역한다. 번역기가 아직 준비되지 않았거나 준비에 실패했으면
+     * 조용히 건너뛴다 — 원문(인식 결과)은 이미 화면에 나가 있으므로 번역만 비는 정도로 그친다.
+     */
+    private fun translateAndUpdate(id: Long, text: String) {
+        val current = translator ?: return
+        serviceScope.launch(Dispatchers.IO) {
+            try {
+                val translated = current.translate(text)
+                TranscriptState.setTranslation(id, translated)
+                subtitleRecorder?.setTranslation(id, translated)
+            } catch (e: TranslationFailedException) {
+                Log.w(TAG, "번역 실패: ${e.message}")
+                TranscriptState.setTranslationError(id, e.message ?: "번역 실패")
+            }
+        }
+    }
+
+    private fun channelLabel(format: CaptureFormat): String =
+        if (format.channelCount == 2) "stereo" else "mono"
+
+    private fun computeRms(buffer: ByteArray, length: Int): Float {
+        if (length < 2) return 0f
+        var sumSquares = 0.0
+        var count = 0
+        var i = 0
+        while (i + 1 < length) {
+            val sample = ((buffer[i + 1].toInt() shl 8) or (buffer[i].toInt() and 0xFF)).toShort()
+            sumSquares += sample.toDouble() * sample.toDouble()
+            count++
+            i += 2
+        }
+        if (count == 0) return 0f
+        val rms = sqrt(sumSquares / count)
+        return (rms / 32768.0).toFloat().coerceIn(0f, 1f)
+    }
+
+    private fun handleStop() {
+        stopCaptureAndSelf()
+    }
+
+    /** 오버레이의 "앱으로 돌아가기" 버튼 — 다른 앱을 보다가 EchoSub를 따로 찾아 열 필요 없이 바로 전면으로. */
+    private fun openMainActivity() {
+        val intent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+        }
+        startActivity(intent)
+    }
+
+    /** 오버레이의 일시정지/재개 버튼 — Intent 왕복 없이 서비스 안에서 바로 처리한다. */
+    private fun toggleSttFromOverlay() {
+        if (sttClient != null) handlePauseStt() else handleResumeStt()
+    }
+
+    /**
+     * STT 스트림만 끊는다 (오디오 캡처/WAV 저장은 계속). 무음·대사 없는 구간에서
+     * 사용자가 직접 눌러 STT 스트리밍 사용료를 아끼기 위한 것 — [runCaptureLoop]의
+     * `sttClient?.sendAudioChunk(...)` 호출은 sttClient가 null이면 그냥 건너뛴다.
+     */
+    private fun handlePauseStt() {
+        val client = sttClient ?: return
+        sttClient = null
+        client.close()
+        TranscriptState.update {
+            it.copy(connectionState = TranscriptState.ConnectionState.PAUSED, interimText = "")
+        }
+        Log.i(TAG, "STT 일시정지 (사용자 요청)")
+    }
+
+    private fun handleResumeStt() {
+        if (sttClient != null) return
+        val languagePair = activeLanguagePair ?: return
+        startSttClient(languagePair)
+        Log.i(TAG, "STT 재개 (사용자 요청)")
+    }
+
+    /**
+     * 최초 시작과 일시정지 후 재개가 똑같이 "새 스트림 열기"라서 공통으로 뺐다.
+     * 캡처 포맷과 무관하게 STT로 가는 오디오는 항상 16kHz 모노다 —
+     * 원본이 그보다 크면 [runCaptureLoop]가 변환해서 보낸다.
+     */
+    private fun startSttClient(languagePair: LanguagePair) {
+        serviceScope.launch(Dispatchers.IO) {
+            val client = SttStreamingClient(
+                applicationContext,
+                languageCode = languagePair.sttLanguageCode,
+                sampleRateHertz = STT_SAMPLE_RATE,
+                audioPositionMs = { audioPositionMs() },
+                onFinalResult = { id, text, startMs, endMs ->
+                    subtitleRecorder?.add(id, startMs, endMs, text)
+                    translateAndUpdate(id, text)
+                },
+            )
+            client.start()
+            sttClient = client
+        }
+    }
+
+    private fun failAndStop(message: String) {
+        Log.e(TAG, message)
+        CaptureState.update { it.copy(isRunning = false, errorMessage = message) }
+        stopCaptureAndSelf()
+    }
+
+    private fun stopCaptureAndSelf() {
+        captureJob?.cancel()
+        captureJob = null
+
+        recorder?.stop()
+        recorder = null
+
+        sttClient?.close()
+        sttClient = null
+        activeLanguagePair = null
+
+        translator?.close()
+        translator = null
+
+        // stopCaptureAndSelf()는 항상 메인 스레드에서 호출된다(onStartCommand/MediaProjection.Callback
+        // 모두 메인 루퍼) — hide()의 WindowManager 호출을 여기서 바로 해도 안전하다.
+        overlay?.hide()
+        overlay = null
+
+        primaryWriter?.close()
+        primaryWriter = null
+        companionWriter?.close()
+        companionWriter = null
+        downsampler = null
+
+        // 일부러 null로 지우지 않는다 — 중지 시점에 아직 번역 중이던 마지막 문장들이
+        // 조금 뒤에 도착하는데, 참조를 끊어버리면 그 번역이 파일에 못 들어간다.
+        // setTranslation은 그때마다 파일을 다시 쓰므로 늦게 와도 반영된다.
+        subtitleRecorder?.finish()
+
+        projectionCallback?.let { cb -> projection?.unregisterCallback(cb) }
+        projectionCallback = null
+        projection?.stop()
+        projection = null
+
+        CaptureState.update { it.copy(isRunning = false) }
+
+        ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+        stopSelf()
+    }
+
+    override fun onDestroy() {
+        // 강제 종료 등 비정상 경로 대비 — 정상 경로에서는 이미 정리된 상태라 no-op에 가깝다.
+        stopCaptureAndSelf()
+        serviceScope.cancel()
+        super.onDestroy()
+    }
+
+    private fun createNotificationChannel() {
+        val manager = getSystemService(NotificationManager::class.java)
+        val channel = NotificationChannel(
+            NOTIFICATION_CHANNEL_ID,
+            getString(R.string.notification_channel_name),
+            NotificationManager.IMPORTANCE_LOW,
+        )
+        manager.createNotificationChannel(channel)
+    }
+
+    private fun buildNotification(): Notification {
+        val stopIntent = buildStopIntent(this)
+        val stopPendingIntent = PendingIntent.getService(
+            this,
+            0,
+            stopIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+
+        return NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
+            .setContentTitle(getString(R.string.notification_title))
+            .setSmallIcon(R.drawable.ic_notification)
+            .setOngoing(true)
+            .addAction(0, getString(R.string.notification_stop_action), stopPendingIntent)
+            .build()
+    }
+}

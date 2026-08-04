@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">EchoSub</string>
+    <string name="notification_channel_name">오디오 캡처</string>
+    <string name="notification_title">EchoSub 캡처 중</string>
+    <string name="notification_stop_action">중지</string>
+    <string name="overlay_waiting">자막 대기 중…</string>
+    <string name="overlay_open_app_description">EchoSub 앱으로 돌아가기</string>
+    <string name="overlay_pause_description">번역 정지 (녹음은 계속됨)</string>
+    <string name="overlay_resume_description">번역 재개</string>
+</resources>

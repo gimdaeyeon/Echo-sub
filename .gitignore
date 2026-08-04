@@ -1,0 +1,14 @@
+*.iml
+.gradle/
+/local.properties
+.idea/
+.DS_Store
+/build
+/captures
+/app/build
+/app/release
+.cxx/
+captured/
+
+# 서비스 계정 비밀키 — 절대 커밋 금지
+/app/src/main/res/raw/service_account.json

@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 폭은 SubtitleOverlay가 WindowManager.LayoutParams.width로 정한다(핀치로 조절).
+     여기서는 match_parent로 두어 그 폭을 그대로 채운다. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/overlay_root"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="@drawable/overlay_background"
+    android:paddingHorizontal="12dp"
+    android:paddingVertical="8dp">
+
+    <!-- 앱으로 돌아가기 / 인식 일시정지·재개 — 다른 앱을 보는 동안 EchoSub를
+         따로 열지 않고 오버레이에서 바로 조작하기 위한 것. -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="end"
+        android:layout_marginBottom="4dp">
+
+        <ImageView
+            android:id="@+id/overlay_btn_open_app"
+            android:layout_width="28dp"
+            android:layout_height="28dp"
+            android:padding="5dp"
+            android:src="@drawable/ic_overlay_open_app"
+            android:background="@drawable/overlay_icon_button_background"
+            android:clickable="true"
+            android:focusable="true"
+            android:contentDescription="@string/overlay_open_app_description" />
+
+        <ImageView
+            android:id="@+id/overlay_btn_toggle_pause"
+            android:layout_width="28dp"
+            android:layout_height="28dp"
+            android:layout_marginStart="6dp"
+            android:padding="5dp"
+            android:src="@drawable/ic_overlay_pause"
+            android:background="@drawable/overlay_icon_button_background"
+            android:clickable="true"
+            android:focusable="true"
+            android:contentDescription="@string/overlay_pause_description" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/overlay_text"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:maxLines="3"
+        android:ellipsize="end"
+        android:textColor="#FFFFFF"
+        android:textSize="22sp"
+        android:shadowColor="#000000"
+        android:shadowDx="0"
+        android:shadowDy="1"
+        android:shadowRadius="3"
+        tools:text="자막 대기 중…" />
+
+</LinearLayout>
