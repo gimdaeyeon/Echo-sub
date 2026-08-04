@@ -4,6 +4,12 @@ import android.content.res.Configuration
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -16,10 +22,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
@@ -32,6 +40,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -48,9 +57,12 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
 import com.example.echosub.data.AppSettings
@@ -148,7 +160,7 @@ fun EchoSubApp(
         topBar = {
             Column {
                 TopAppBar(
-                    title = { Text("EchoSub", style = MaterialTheme.typography.titleMedium) },
+                    title = { BrandWordmark() },
                     // 위쪽은 "지금 어떤 상태인가"만 보여주고, 손대는 것은 전부 아래 버튼으로 모았다.
                     actions = {
                         StatusPill(
@@ -186,13 +198,20 @@ fun EchoSubApp(
             }
         },
         bottomBar = {
-            NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
+            NavigationBar(containerColor = MaterialTheme.colorScheme.surfaceContainer) {
                 Tab.entries.forEach { entry ->
                     NavigationBarItem(
                         selected = tab == entry,
                         onClick = { tab = entry },
                         icon = { Icon(entry.icon, contentDescription = entry.label) },
                         label = { Text(entry.label) },
+                        colors = NavigationBarItemDefaults.colors(
+                            indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+                            selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                            selectedTextColor = MaterialTheme.colorScheme.onSurface,
+                            unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                            unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                        ),
                     )
                 }
             }
@@ -316,6 +335,50 @@ private fun SttPauseFab(
     )
 }
 
+/**
+ * 상단 좌측의 브랜드 마크 — 그라데이션 사각 로고 + 워드마크.
+ * "Echo"만 굵게 쳐서 텍스트 하나여도 로고처럼 읽히게 한다.
+ */
+@Composable
+private fun BrandWordmark() {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            modifier = Modifier
+                .size(28.dp)
+                .clip(RoundedCornerShape(9.dp))
+                .background(
+                    Brush.linearGradient(
+                        colors = listOf(
+                            MaterialTheme.colorScheme.primary,
+                            MaterialTheme.colorScheme.tertiary,
+                        ),
+                    ),
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = Icons.Filled.GraphicEq,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onPrimary,
+                modifier = Modifier.size(18.dp),
+            )
+        }
+        Row(modifier = Modifier.padding(start = 10.dp)) {
+            Text(
+                text = "Echo",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+            )
+            Text(
+                text = "Sub",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Normal,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
 /** 상단 우측의 상태 알약 — 실행 중이면 경과 시간, 아니면 대기 표시. */
 @Composable
 private fun StatusPill(
@@ -338,10 +401,26 @@ private fun StatusPill(
         else -> formatElapsed(elapsedMs)
     }
 
+    // 녹음 중에는 점을 천천히 깜빡여 "지금 돌고 있다"가 숫자를 읽지 않아도 보이게 한다.
+    val pulse = rememberInfiniteTransition(label = "statusDot")
+    val dotAlpha by pulse.animateFloat(
+        initialValue = 1f,
+        targetValue = 0.25f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 900, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "statusDotAlpha",
+    )
+
     Surface(
         modifier = modifier,
         shape = CircleShape,
-        color = MaterialTheme.colorScheme.surfaceVariant,
+        color = if (isRunning) {
+            MaterialTheme.colorScheme.primaryContainer
+        } else {
+            MaterialTheme.colorScheme.surfaceContainerHigh
+        },
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
@@ -350,13 +429,18 @@ private fun StatusPill(
             Box(
                 modifier = Modifier
                     .size(8.dp)
+                    .alpha(if (isRunning) dotAlpha else 1f)
                     .clip(CircleShape)
                     .background(dotColor),
             )
             Text(
                 text = label,
                 style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = if (isRunning) {
+                    MaterialTheme.colorScheme.onPrimaryContainer
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
                 modifier = Modifier.padding(start = 6.dp),
             )
         }

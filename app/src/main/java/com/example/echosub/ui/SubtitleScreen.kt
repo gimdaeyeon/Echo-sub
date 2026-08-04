@@ -1,16 +1,29 @@
 package com.example.echosub.ui
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Subtitles
+import androidx.compose.material.icons.outlined.ErrorOutline
+import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -21,6 +34,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -33,6 +48,9 @@ import com.example.echosub.stt.TranscriptState
  *
  * 위계를 뒤집었다 — 예전 화면은 원문이 본문 크기, 번역이 그 아래 보조였는데
  * 이 앱을 쓰는 이유는 번역이므로 **번역문을 본문**으로 올리고 원문을 각주처럼 내렸다.
+ *
+ * 최신 문장만 카드로 띄우고 지난 문장들은 왼쪽 세로줄로 묶는다 — "지금 들리는 말"과
+ * "이미 지나간 말"이 스크롤 위치와 무관하게 한눈에 갈리게.
  */
 @Composable
 fun SubtitleScreen(
@@ -92,7 +110,14 @@ fun SubtitleScreen(
     val isEmpty = entries.isEmpty() && transcript.interimText.isBlank()
 
     Column(modifier = Modifier.fillMaxSize()) {
-        banners.forEach { BannerRow(it) }
+        if (banners.isNotEmpty()) {
+            Column(
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                banners.forEach { BannerRow(it) }
+            }
+        }
 
         if (isEmpty) {
             EmptyState(isRunning = status.isRunning, sttEnabled = sttEnabled)
@@ -104,7 +129,7 @@ fun SubtitleScreen(
                     modifier = Modifier.fillMaxSize(),
                     // 하단은 FAB에 가리지 않도록 넉넉히 비운다.
                     contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 96.dp),
-                    verticalArrangement = Arrangement.spacedBy(18.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
                 ) {
                     items(entries, key = { it.id }) { entry ->
                         TranscriptEntryRow(
@@ -119,6 +144,7 @@ fun SubtitleScreen(
                                 style = MaterialTheme.typography.bodyMedium,
                                 fontStyle = FontStyle.Italic,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(start = 15.dp),
                             )
                         }
                     }
@@ -130,41 +156,82 @@ fun SubtitleScreen(
 
 @Composable
 private fun TranscriptEntryRow(entry: TranscriptState.Entry, isLatest: Boolean) {
-    Column(
-        modifier = Modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
-    ) {
-        when {
-            entry.translatedText != null -> Text(
-                text = entry.translatedText,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = if (isLatest) FontWeight.SemiBold else FontWeight.Normal,
-                color = if (isLatest) {
-                    MaterialTheme.colorScheme.primary
-                } else {
-                    MaterialTheme.colorScheme.onSurface
-                },
-            )
-
-            entry.translationError != null -> Text(
-                text = "번역 실패: ${entry.translationError}",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.error,
-            )
-
-            else -> Text(
-                text = "번역 중…",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+    // 최신 문장은 카드로 들어 올리고, 지난 문장은 왼쪽 세로줄만 남긴다.
+    if (isLatest) {
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = MaterialTheme.shapes.large,
+            color = MaterialTheme.colorScheme.primaryContainer,
+        ) {
+            Column(
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                EntryTexts(
+                    entry = entry,
+                    translatedColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                    translatedWeight = FontWeight.SemiBold,
+                    sourceColor = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.65f),
+                )
+            }
         }
+    } else {
+        Row(modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
+            Box(
+                modifier = Modifier
+                    .width(3.dp)
+                    .fillMaxHeight()
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.outlineVariant),
+            )
+            Column(
+                modifier = Modifier.padding(start = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                EntryTexts(
+                    entry = entry,
+                    translatedColor = MaterialTheme.colorScheme.onSurface,
+                    translatedWeight = FontWeight.Normal,
+                    sourceColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
 
-        Text(
-            text = entry.sourceText,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+@Composable
+private fun EntryTexts(
+    entry: TranscriptState.Entry,
+    translatedColor: Color,
+    translatedWeight: FontWeight,
+    sourceColor: Color,
+) {
+    when {
+        entry.translatedText != null -> Text(
+            text = entry.translatedText,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = translatedWeight,
+            color = translatedColor,
+        )
+
+        entry.translationError != null -> Text(
+            text = "번역 실패: ${entry.translationError}",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.error,
+        )
+
+        else -> Text(
+            text = "번역 중…",
+            style = MaterialTheme.typography.bodyMedium,
+            color = sourceColor,
         )
     }
+
+    Text(
+        text = entry.sourceText,
+        style = MaterialTheme.typography.bodySmall,
+        color = sourceColor,
+    )
 }
 
 private data class Banner(val text: String, val isError: Boolean)
@@ -173,22 +240,38 @@ private data class Banner(val text: String, val isError: Boolean)
 private fun BannerRow(banner: Banner) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.medium,
         color = if (banner.isError) {
             MaterialTheme.colorScheme.errorContainer
         } else {
-            MaterialTheme.colorScheme.surfaceVariant
+            MaterialTheme.colorScheme.surfaceContainerHigh
         },
     ) {
-        Text(
-            text = banner.text,
-            style = MaterialTheme.typography.bodySmall,
-            color = if (banner.isError) {
-                MaterialTheme.colorScheme.onErrorContainer
-            } else {
-                MaterialTheme.colorScheme.onSurfaceVariant
-            },
-            modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp),
-        )
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                imageVector = if (banner.isError) Icons.Outlined.ErrorOutline else Icons.Outlined.Info,
+                contentDescription = null,
+                modifier = Modifier.size(16.dp),
+                tint = if (banner.isError) {
+                    MaterialTheme.colorScheme.onErrorContainer
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+            )
+            Text(
+                text = banner.text,
+                style = MaterialTheme.typography.bodySmall,
+                color = if (banner.isError) {
+                    MaterialTheme.colorScheme.onErrorContainer
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+                modifier = Modifier.padding(start = 10.dp),
+            )
+        }
     }
 }
 
@@ -210,11 +293,26 @@ private fun EmptyState(isRunning: Boolean, sttEnabled: Boolean) {
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
+            Box(
+                modifier = Modifier
+                    .size(88.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Subtitles,
+                    contentDescription = null,
+                    modifier = Modifier.size(40.dp),
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+            }
             Text(
                 text = title,
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.onSurface,
                 textAlign = TextAlign.Center,
+                modifier = Modifier.padding(top = 8.dp),
             )
             Text(
                 text = hint,

@@ -28,6 +28,7 @@ import androidx.compose.material.icons.filled.ViewAgenda
 import androidx.compose.material.icons.filled.ViewColumn
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -47,6 +48,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -276,7 +279,16 @@ private fun NowPlayingPanel(
     onTogglePlay: () -> Unit,
 ) {
     Column(
-        modifier = modifier,
+        // 지금 들리는 대사 영역에만 은은한 세로 그라데이션을 깔아 "무대"처럼 띄운다 —
+        // 대본 목록과 같은 흰 면이면 어디를 봐야 하는지 화면이 말해주지 않는다.
+        modifier = modifier.background(
+            Brush.verticalGradient(
+                colors = listOf(
+                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f),
+                    Color.Transparent,
+                ),
+            ),
+        ),
         verticalArrangement = Arrangement.Center,
     ) {
         Box(
@@ -308,9 +320,8 @@ private fun NowPlayingPanel(
                 ) {
                     Text(
                         text = currentCue.translatedText ?: currentCue.sourceText,
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.primary,
+                        style = MaterialTheme.typography.headlineSmall,
+                        color = MaterialTheme.colorScheme.onSurface,
                         textAlign = TextAlign.Center,
                     )
                     if (currentCue.translatedText != null) {
@@ -354,11 +365,17 @@ private fun NowPlayingPanel(
             ) {
                 FilledIconButton(
                     onClick = onTogglePlay,
-                    modifier = Modifier.size(56.dp),
+                    modifier = Modifier.size(64.dp),
+                    shape = RoundedCornerShape(22.dp),
+                    colors = IconButtonDefaults.filledIconButtonColors(
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary,
+                    ),
                 ) {
                     Icon(
                         imageVector = if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
                         contentDescription = if (isPlaying) "일시정지" else "재생",
+                        modifier = Modifier.size(30.dp),
                     )
                 }
             }
@@ -413,12 +430,12 @@ private fun CueRow(cue: Cue, isActive: Boolean, onClick: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
+            .clip(RoundedCornerShape(12.dp))
             .background(
                 if (isActive) {
                     MaterialTheme.colorScheme.secondaryContainer
                 } else {
-                    MaterialTheme.colorScheme.surface
+                    Color.Transparent
                 },
             )
             .clickable(onClick = onClick)
@@ -427,7 +444,12 @@ private fun CueRow(cue: Cue, isActive: Boolean, onClick: () -> Unit) {
         Text(
             text = formatElapsed(cue.startMs),
             style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            fontWeight = if (isActive) FontWeight.SemiBold else FontWeight.Normal,
+            color = if (isActive) {
+                MaterialTheme.colorScheme.primary
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
             modifier = Modifier
                 .width(48.dp)
                 .padding(top = 2.dp),

@@ -3,6 +3,7 @@ package com.example.echosub.ui
 import android.content.Context
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -18,12 +19,15 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.DriveFileRenameOutline
+import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -33,6 +37,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -45,7 +50,9 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.echosub.capture.readWavDurationMs
 import com.example.echosub.subtitle.subtitleFileFor
@@ -338,10 +345,11 @@ private fun CaptureFileRow(
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
         colors = if (isSelected) {
             CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
         } else {
-            CardDefaults.cardColors()
+            CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
         },
     ) {
         Row(
@@ -354,7 +362,7 @@ private fun CaptureFileRow(
                     onClick = { if (selectionMode) onToggleSelect() else onPlayClick() },
                     onLongClick = onLongPress,
                 )
-                .padding(start = 16.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
+                .padding(start = 12.dp, end = 4.dp, top = 10.dp, bottom = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (selectionMode && !isActive) {
@@ -362,26 +370,76 @@ private fun CaptureFileRow(
                     checked = isSelected,
                     onCheckedChange = { onToggleSelect() },
                 )
+            } else {
+                // 파일 유형이 하나뿐이라 아이콘이 정보는 아니지만, 행의 시작을 잡아주는
+                // 앵커가 있어야 목록이 파일 관리자가 아니라 라이브러리처럼 읽힌다.
+                Box(
+                    modifier = Modifier
+                        .size(42.dp)
+                        .clip(CircleShape)
+                        .background(
+                            if (isActive) {
+                                MaterialTheme.colorScheme.errorContainer
+                            } else {
+                                MaterialTheme.colorScheme.primaryContainer
+                            },
+                        ),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = if (isActive) Icons.Filled.Mic else Icons.Filled.GraphicEq,
+                        contentDescription = null,
+                        modifier = Modifier.size(20.dp),
+                        tint = if (isActive) {
+                            MaterialTheme.colorScheme.onErrorContainer
+                        } else {
+                            MaterialTheme.colorScheme.onPrimaryContainer
+                        },
+                    )
+                }
             }
-            Column(modifier = Modifier.weight(1f)) {
-                Text(text = file.name, style = MaterialTheme.typography.bodyMedium)
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(start = 12.dp),
+            ) {
                 Text(
-                    text = buildString {
-                        append(formatTimestamp(file.lastModified))
-                        // 녹음 중인 파일은 헤더가 아직 패치되지 않아 길이를 알 수 없다.
-                        if (!isActive) {
-                            file.durationMs?.let {
-                                append(" · ")
-                                append(formatElapsed(it))
-                            }
-                        }
-                        append(" · ")
-                        append(formatBytes(file.sizeBytes))
-                        if (file.hasSubtitles) append(" · 자막")
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    text = file.name,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium,
                 )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = buildString {
+                            append(formatTimestamp(file.lastModified))
+                            // 녹음 중인 파일은 헤더가 아직 패치되지 않아 길이를 알 수 없다.
+                            if (!isActive) {
+                                file.durationMs?.let {
+                                    append(" · ")
+                                    append(formatElapsed(it))
+                                }
+                            }
+                            append(" · ")
+                            append(formatBytes(file.sizeBytes))
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    if (file.hasSubtitles) {
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.secondaryContainer,
+                            modifier = Modifier.padding(start = 6.dp),
+                        ) {
+                            Text(
+                                text = "자막",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
+                            )
+                        }
+                    }
+                }
             }
             if (isActive) {
                 Icon(

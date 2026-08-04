@@ -16,9 +16,15 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.BatteryAlert
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Subtitles
+import androidx.compose.material.icons.filled.Translate
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -40,8 +46,12 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.size
 import com.example.echosub.data.AppSettings
 import com.example.echosub.overlay.OverlaySettings
 import com.example.echosub.translate.LanguagePair
@@ -83,7 +93,7 @@ fun SettingsScreen(
 
         // 이미 예외 처리돼 있으면 더 볼 것 없으니 카드 자체를 숨긴다 — 계속 신경 쓸 항목이 아니다.
         if (!batteryOptimizationExempt) {
-            SettingsCard(title = "배터리 최적화", enabled = true) {
+            SettingsCard(title = "배터리 최적화", icon = Icons.Filled.BatteryAlert, enabled = true) {
                 Text(
                     "화면을 끄거나 다른 앱을 오래 쓰면 OS가 캡처를 강제로 멈출 수 있습니다. " +
                         "예외로 등록하면 백그라운드에서도 끊기지 않습니다.",
@@ -96,7 +106,7 @@ fun SettingsScreen(
             }
         }
 
-        SettingsCard(title = "번역", enabled = translateEnabled) {
+        SettingsCard(title = "번역", icon = Icons.Filled.Translate, enabled = translateEnabled) {
             SwitchRow(
                 title = "STT + 번역 사용",
                 subtitle = "끄면 녹음만 합니다. 녹음 음질과는 무관합니다.",
@@ -136,7 +146,7 @@ fun SettingsScreen(
             }
         }
 
-        SettingsCard(title = "자막 오버레이", enabled = translateEnabled) {
+        SettingsCard(title = "자막 오버레이", icon = Icons.Filled.Subtitles, enabled = translateEnabled) {
             SwitchRow(
                 title = "다른 앱 위에 자막 표시",
                 subtitle = "유튜브 등을 보면서 번역을 읽습니다 (오버레이 권한 필요)",
@@ -174,8 +184,9 @@ fun SettingsScreen(
         // ── 고급 ────────────────────────────────────────────────────────────
         Card(
             modifier = Modifier.fillMaxWidth(),
+            shape = MaterialTheme.shapes.large,
             colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
             ),
         ) {
             Row(
@@ -185,10 +196,18 @@ fun SettingsScreen(
                     .padding(horizontal = 16.dp, vertical = 14.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                Icon(
+                    imageVector = Icons.Filled.Tune,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 Text(
                     text = "고급 · 녹음 음질",
                     style = MaterialTheme.typography.titleSmall,
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(start = 10.dp),
                 )
                 Icon(
                     imageVector = if (advancedExpanded) {
@@ -328,23 +347,47 @@ private fun LanguagePickerDialog(
 @Composable
 private fun SettingsCard(
     title: String,
+    icon: ImageVector,
     enabled: Boolean,
     content: @Composable () -> Unit,
 ) {
-    Card(modifier = Modifier.fillMaxWidth()) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        ),
+    ) {
         Column(
             modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.titleSmall,
-                color = if (enabled) {
-                    MaterialTheme.colorScheme.onSurface
-                } else {
-                    MaterialTheme.colorScheme.onSurfaceVariant
-                },
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .size(30.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(MaterialTheme.colorScheme.primaryContainer),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = null,
+                        modifier = Modifier.size(17.dp),
+                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                    )
+                }
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleSmall,
+                    color = if (enabled) {
+                        MaterialTheme.colorScheme.onSurface
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                    modifier = Modifier.padding(start = 10.dp),
+                )
+            }
             content()
         }
     }
