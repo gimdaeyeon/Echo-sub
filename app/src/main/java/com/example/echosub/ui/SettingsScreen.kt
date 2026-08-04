@@ -9,13 +9,17 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -24,9 +28,11 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -58,6 +64,7 @@ fun SettingsScreen(
     onRequestBatteryExemption: () -> Unit,
 ) {
     var advancedExpanded by rememberSaveable { mutableStateOf(false) }
+    var showLanguagePicker by rememberSaveable { mutableStateOf(false) }
     val translateEnabled = values.sttEnabled
 
     Column(
@@ -99,12 +106,11 @@ fun SettingsScreen(
             )
 
             Label("언어")
-            ChoiceRow(
-                options = LanguagePair.entries,
+            // 언어가 늘어나면서(28개) 칩 한 줄에 다 못 담는다 — 목록 다이얼로그로 골라서 고른다.
+            LanguagePickerRow(
                 selected = values.languagePair,
-                labelOf = { it.label },
                 enabled = translateEnabled && !isRunning,
-                onSelect = { AppSettings.setLanguagePair(it) },
+                onClick = { showLanguagePicker = true },
             )
 
             Label("엔진")
@@ -242,6 +248,81 @@ fun SettingsScreen(
         // 마지막 카드를 FAB 위로 스크롤해 올릴 수 있을 만큼 비워둔다.
         Spacer(modifier = Modifier.height(120.dp))
     }
+
+    if (showLanguagePicker) {
+        LanguagePickerDialog(
+            selected = values.languagePair,
+            onDismiss = { showLanguagePicker = false },
+            onSelect = {
+                AppSettings.setLanguagePair(it)
+                showLanguagePicker = false
+            },
+        )
+    }
+}
+
+/** 현재 고른 언어를 보여주고 누르면 [LanguagePickerDialog]를 여는 줄. */
+@Composable
+private fun LanguagePickerRow(
+    selected: LanguagePair,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = selected.displayName,
+            style = MaterialTheme.typography.bodyLarge,
+            color = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f),
+        )
+        Icon(
+            imageVector = Icons.Filled.KeyboardArrowDown,
+            contentDescription = "언어 선택",
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+/** 출발 언어 28개를 스크롤 목록에서 고른다. 도착 언어는 항상 한국어라 목록에 따로 안 보여준다. */
+@Composable
+private fun LanguagePickerDialog(
+    selected: LanguagePair,
+    onDismiss: () -> Unit,
+    onSelect: (LanguagePair) -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("출발 언어") },
+        text = {
+            LazyColumn(modifier = Modifier.heightIn(max = 420.dp)) {
+                items(LanguagePair.entries, key = { it.name }) { pair ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onSelect(pair) }
+                            .padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(selected = pair == selected, onClick = { onSelect(pair) })
+                        Text(
+                            text = pair.label,
+                            style = MaterialTheme.typography.bodyLarge,
+                            modifier = Modifier.padding(start = 4.dp),
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("닫기") }
+        },
+    )
 }
 
 @Composable

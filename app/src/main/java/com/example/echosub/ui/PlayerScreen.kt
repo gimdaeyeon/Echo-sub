@@ -24,6 +24,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.ViewAgenda
+import androidx.compose.material.icons.filled.ViewColumn
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -78,6 +80,9 @@ fun PlayerScreen(
     fileName: String,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
+    /** 가로 모드에서 좌우 대신 상하로 쌓을지. 세로 모드는 항상 상하라 이 값과 무관하다. */
+    landscapeStacked: Boolean = false,
+    onToggleLandscapeStacked: () -> Unit = {},
 ) {
     BackHandler(onBack = onBack)
 
@@ -158,6 +163,15 @@ fun PlayerScreen(
                 style = MaterialTheme.typography.bodyMedium,
                 modifier = Modifier.weight(1f),
             )
+            // 세로 모드는 항상 위아래로 쌓이므로 이 버튼은 가로일 때만 의미가 있다.
+            if (isLandscape) {
+                IconButton(onClick = onToggleLandscapeStacked) {
+                    Icon(
+                        imageVector = if (landscapeStacked) Icons.Filled.ViewColumn else Icons.Filled.ViewAgenda,
+                        contentDescription = if (landscapeStacked) "좌우로 나누기" else "위아래로 쌓기",
+                    )
+                }
+            }
         }
         HorizontalDivider()
 
@@ -214,8 +228,20 @@ fun PlayerScreen(
         }
 
         // 가로에서는 세로 공간이 절반 이하로 줄어든다. 위아래로 쌓으면 대본이
-        // 몇 줄밖에 안 보이므로 좌우로 갈라 각자 높이를 다 쓰게 한다.
-        if (isLandscape) {
+        // 몇 줄밖에 안 보이므로 기본은 좌우로 갈라 각자 높이를 다 쓰게 한다 —
+        // 다만 이건 취향 차이라 상단 버튼으로 위아래 쌓기를 고를 수 있게 열어둔다.
+        if (isLandscape && landscapeStacked) {
+            // 세로 모드의 Column과 다르다 — 그건 높이가 넉넉해 재생 조작부가 필요한
+            // 만큼만 차지해도 되지만, 가로는 높이가 짧아 그대로 재사용하면 재생 버튼이
+            // 화면 밖으로 밀려난다. 좌우 분할과 똑같이 weight(1f)로 절반씩 나눠 확보한다.
+            Column(modifier = Modifier.fillMaxSize()) {
+                nowPlaying(Modifier.weight(1f).fillMaxWidth(), true)
+                if (cues.isNotEmpty()) {
+                    HorizontalDivider()
+                    transcript(Modifier.weight(1f).fillMaxWidth())
+                }
+            }
+        } else if (isLandscape) {
             Row(modifier = Modifier.fillMaxSize()) {
                 nowPlaying(Modifier.weight(1f).fillMaxHeight(), true)
                 if (cues.isNotEmpty()) {

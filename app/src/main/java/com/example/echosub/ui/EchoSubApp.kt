@@ -130,6 +130,10 @@ fun EchoSubApp(
                 fileName = File(path).name,
                 onBack = { playingPath = null },
                 modifier = Modifier.systemBarsPadding(),
+                landscapeStacked = settings.playerLandscapeStacked,
+                onToggleLandscapeStacked = {
+                    AppSettings.setPlayerLandscapeStacked(!settings.playerLandscapeStacked)
+                },
             )
         }
         return

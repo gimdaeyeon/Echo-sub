@@ -49,6 +49,11 @@ object AppSettings {
         val save16kCompanion: Boolean = false,
         /** STT + 번역 사용 여부. 끄면 녹음만 한다. */
         val translationEnabled: Boolean = true,
+        /**
+         * 재생 화면을 가로로 눕혔을 때 좌우(false)로 나눌지 상하(true)로 쌓을지.
+         * 세로 모드는 항상 위아래로 쌓으므로 이 값과 무관하다 — 가로에서만 의미가 있다.
+         */
+        val playerLandscapeStacked: Boolean = false,
     ) {
         val captureFormat: CaptureFormat
             get() = if (hifiRecordingMode) CaptureFormat.HIFI else CaptureFormat.STT_READY
@@ -68,6 +73,7 @@ object AppSettings {
     private const val KEY_HIFI_MODE = "hifi_recording_mode"
     private const val KEY_SAVE_16K = "save_16k_companion"
     private const val KEY_TRANSLATION_ENABLED = "translation_enabled"
+    private const val KEY_PLAYER_LANDSCAPE_STACKED = "player_landscape_stacked"
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
@@ -95,6 +101,7 @@ object AppSettings {
             hifiRecordingMode = p.getBoolean(KEY_HIFI_MODE, false),
             save16kCompanion = p.getBoolean(KEY_SAVE_16K, false),
             translationEnabled = p.getBoolean(KEY_TRANSLATION_ENABLED, true),
+            playerLandscapeStacked = p.getBoolean(KEY_PLAYER_LANDSCAPE_STACKED, false),
         )
         OverlaySettings.setTextSize(_values.value.overlayTextSizeSp)
         OverlaySettings.setBoxWidth(_values.value.overlayBoxWidthDp)
@@ -169,6 +176,11 @@ object AppSettings {
     fun setTranslationEnabled(enabled: Boolean) = update(
         transform = { it.copy(translationEnabled = enabled) },
         persist = { putBoolean(KEY_TRANSLATION_ENABLED, enabled) },
+    )
+
+    fun setPlayerLandscapeStacked(stacked: Boolean) = update(
+        transform = { it.copy(playerLandscapeStacked = stacked) },
+        persist = { putBoolean(KEY_PLAYER_LANDSCAPE_STACKED, stacked) },
     )
 
     private inline fun update(
