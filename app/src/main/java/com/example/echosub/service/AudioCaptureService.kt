@@ -48,7 +48,6 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.io.File
@@ -75,6 +74,12 @@ class AudioCaptureService : Service() {
 
         /** Google STT 스트리밍에 보내는 오디오 포맷 — 캡처 포맷과 무관하게 항상 이 값이다. */
         private const val STT_SAMPLE_RATE = 16_000
+
+        /** 번역기에 문맥으로 함께 넘길 직전 문장 개수. */
+        private const val CONTEXT_SENTENCES = 3
+
+        /** 오버레이 히스토리에 함께 보여줄 최근 문장 개수. */
+        private const val OVERLAY_HISTORY_SIZE = 6
 
         const val ACTION_START = "com.example.echosub.action.START"
         const val ACTION_STOP = "com.example.echosub.action.STOP"
@@ -324,10 +329,16 @@ class AudioCaptureService : Service() {
                     AppForegroundState.isForeground.collect { inForeground -> ov.setVisible(!inForeground) }
                 }
                 serviceScope.launch(Dispatchers.Main) {
+                    // 최근 몇 개만 넘긴다 — 오버레이는 화면 한구석의 작은 창이라
+                    // TranscriptState 전량(최근 50개)을 다 그릴 이유가 없다.
                     TranscriptState.status
-                        .mapNotNull { it.finalEntries.lastOrNull { e -> e.translatedText != null }?.translatedText }
+                        .map { status ->
+                            status.finalEntries.takeLast(OVERLAY_HISTORY_SIZE).map { e ->
+                                SubtitleOverlay.Entry(e.sourceText, e.translatedText, e.translationError)
+                            }
+                        }
                         .distinctUntilChanged()
-                        .collect { ov.setText(it) }
+                        .collect { ov.setEntries(it) }
                 }
                 serviceScope.launch(Dispatchers.Main) {
                     TranscriptState.status
@@ -392,9 +403,12 @@ class AudioCaptureService : Service() {
      */
     private fun translateAndUpdate(id: Long, text: String) {
         val current = translator ?: return
+        // 문맥은 지금(번역을 거는 시점) 기준으로 뽑는다 — 번역은 병렬로 도는데 코루틴
+        // 안에서 다시 읽으면 나중 문장까지 섞여 들어온다.
+        val precedingContext = precedingContextFor(id)
         serviceScope.launch(Dispatchers.IO) {
             try {
-                val translated = current.translate(text)
+                val translated = current.translate(text, precedingContext)
                 TranscriptState.setTranslation(id, translated)
                 subtitleRecorder?.setTranslation(id, translated)
             } catch (e: TranslationFailedException) {
@@ -403,6 +417,19 @@ class AudioCaptureService : Service() {
             }
         }
     }
+
+    /**
+     * [id] 문장 바로 앞에 나온 원문 몇 개.
+     *
+     * 자막 한 줄은 짧아서 그 줄만 보면 무엇을 가리키는지 알 수 없는 경우가 많다
+     * ("그건 아니야"의 "그건"이 무엇인지 등). 앞 문장을 함께 넘기면 번역기가
+     * 대명사·말투·용어를 앞뒤 맞게 고른다. 번역 결과에는 포함되지 않는다.
+     */
+    private fun precedingContextFor(id: Long): String =
+        TranscriptState.status.value.finalEntries
+            .filter { it.id < id }
+            .takeLast(CONTEXT_SENTENCES)
+            .joinToString(" ") { it.sourceText }
 
     private fun channelLabel(format: CaptureFormat): String =
         if (format.channelCount == 2) "stereo" else "mono"

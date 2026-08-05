@@ -14,8 +14,14 @@ interface Translator : AutoCloseable {
      */
     suspend fun prepare()
 
-    /** @return 번역된 문자열. 실패 시 [TranslationFailedException]. */
-    suspend fun translate(text: String): String
+    /**
+     * @param precedingContext 바로 앞에 나온 원문 몇 문장. **번역 결과에 포함되지 않고**
+     *   대명사·존댓말·용어를 앞뒤가 맞게 고르는 힌트로만 쓰인다. 자막은 한 줄이 짧아
+     *   그 줄만 보면 무엇을 가리키는지 알 수 없는 경우가 많은데, 이 힌트가 그걸 메운다.
+     *   지원하지 않는 엔진은 무시한다.
+     * @return 번역된 문자열. 실패 시 [TranslationFailedException].
+     */
+    suspend fun translate(text: String, precedingContext: String? = null): String
 
     override fun close() {}
 }

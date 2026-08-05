@@ -44,7 +44,8 @@ class MlKitTranslator(private val pair: LanguagePair) : Translator {
         Log.i(TAG, "모델 준비 완료: ${pair.label}")
     }
 
-    override suspend fun translate(text: String): String {
+    /** ML Kit 온디바이스 모델은 문장 하나만 받는다 — [precedingContext]를 실을 자리가 없어 무시한다. */
+    override suspend fun translate(text: String, precedingContext: String?): String {
         val client = delegate
             ?: throw TranslationFailedException("prepare()가 먼저 호출되어야 합니다")
         return try {

@@ -51,6 +51,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -103,6 +104,10 @@ fun EchoSubApp(
     var playingPath by rememberSaveable { mutableStateOf<String?>(null) }
 
     var confirmStop by remember { mutableStateOf(false) }
+
+    // 자막 화면의 안내 배너 중 사용자가 닫은 것들. 자막 화면 안에 두면 탭을 옮겼다
+    // 돌아올 때마다 되살아나므로(그 컴포지션이 통째로 버려진다) 셸이 들고 있는다.
+    val dismissedBanners = remember { mutableStateListOf<String>() }
 
     val isLandscape =
         LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
@@ -252,6 +257,7 @@ fun EchoSubApp(
                     transcript = transcript,
                     sttEnabled = settings.sttEnabled,
                     batteryOptimizationExempt = batteryOptimizationExempt,
+                    dismissedBanners = dismissedBanners,
                 )
 
                 Tab.HISTORY -> HistoryScreen(

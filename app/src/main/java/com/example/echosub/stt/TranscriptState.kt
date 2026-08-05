@@ -73,6 +73,18 @@ object TranscriptState {
         return id
     }
 
+    /**
+     * 이미 추가한 문장에 뒷부분을 이어 붙인다.
+     *
+     * STT 확정 결과는 문장 중간에서 끊겨 오는 일이 잦은데, 조각마다 새 엔트리를 만들면
+     * 번역기가 문장 반 토막을 문맥 없이 번역하게 된다. 조각이 이어지는 동안에는 같은
+     * 엔트리를 키워 두었다가, 문장이 닫힌 뒤에 한 번만 번역한다.
+     */
+    fun extendFinal(id: Long, mergedText: String, audioEndMs: Long) {
+        updateEntry(id) { it.copy(sourceText = mergedText.trim(), audioEndMs = audioEndMs) }
+        update { it.copy(interimText = "") }
+    }
+
     fun setTranslation(id: Long, translated: String) =
         updateEntry(id) { it.copy(translatedText = translated) }
 
