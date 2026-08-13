@@ -115,6 +115,13 @@ dependencies {
     // 온디바이스 번역 (모델은 최초 사용 시 런타임 다운로드, 언어당 약 30MB)
     implementation("com.google.mlkit:translate:17.0.3")
 
+    // 화면 자막 읽기(OCR) — 갤럭시 '실시간 자막' 창을 캡처해 텍스트로 되읽는다.
+    // 모델이 APK에 번들된다(문자계별 약 4MB). 키릴·그리스 문자는 ML Kit이 지원하지 않아
+    // 해당 언어에서는 화면 자막 모드를 막는다 (CaptionOcr 참고).
+    implementation("com.google.mlkit:text-recognition:16.0.0")
+    implementation("com.google.mlkit:text-recognition-japanese:16.0.0")
+    implementation("com.google.mlkit:text-recognition-chinese:16.0.0")
+
     debugImplementation("androidx.compose.ui:ui-tooling")
 
     // JVM 단위 테스트 — 순수 로직(리샘플러, SRT 직렬화, WAV 헤더, 문장 병합)만 대상이라

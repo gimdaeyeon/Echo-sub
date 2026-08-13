@@ -52,6 +52,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
+import com.example.echosub.caption.SubtitleSource
 import com.example.echosub.data.AppSettings
 import com.example.echosub.overlay.OverlaySettings
 import com.example.echosub.translate.LanguagePair
@@ -113,6 +114,20 @@ fun SettingsScreen(
                 checked = values.translationEnabled,
                 enabled = !isRunning,
                 onCheckedChange = { AppSettings.setTranslationEnabled(it) },
+            )
+
+            Label("자막 소스")
+            ChoiceRow(
+                options = SubtitleSource.entries,
+                selected = values.subtitleSource,
+                labelOf = { it.label },
+                enabled = translateEnabled && !isRunning,
+                onSelect = { AppSettings.setSubtitleSource(it) },
+            )
+            Text(
+                text = values.subtitleSource.description,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
 
             Label("언어")

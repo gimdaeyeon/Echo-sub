@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 자막 읽기 영역 선택 상자 — 아래 화면이 비쳐 보여야 자막 위치에 맞출 수 있으므로
+     채움은 거의 없이 테두리로만 존재를 알린다. 색은 오버레이 강조색(#8AB4F8) 계열. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <corners android:radius="12dp" />
+    <solid android:color="#148AB4F8" />
+    <stroke android:width="2dp" android:color="#CC8AB4F8" />
+</shape>

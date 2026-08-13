@@ -1,13 +1,10 @@
 package com.example.echosub.translate
 
 import android.util.Log
-import com.google.android.gms.tasks.Task
+import com.example.echosub.util.await
 import com.google.mlkit.common.model.DownloadConditions
 import com.google.mlkit.nl.translate.Translation
 import com.google.mlkit.nl.translate.TranslatorOptions
-import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlin.coroutines.resume
-import kotlin.coroutines.resumeWithException
 import com.google.mlkit.nl.translate.Translator as MlKitNativeTranslator
 
 private const val TAG = "MlKitTranslator"
@@ -59,14 +56,4 @@ class MlKitTranslator(private val pair: LanguagePair) : Translator {
         delegate?.close()
         delegate = null
     }
-}
-
-/**
- * Play Services [Task]를 코루틴으로 감싼다.
- * kotlinx-coroutines-play-services 의존성을 추가하지 않기 위해 직접 구현했다.
- */
-private suspend fun <T> Task<T>.await(): T = suspendCancellableCoroutine { continuation ->
-    addOnSuccessListener { result -> continuation.resume(result) }
-    addOnFailureListener { error -> continuation.resumeWithException(error) }
-    addOnCanceledListener { continuation.cancel() }
 }

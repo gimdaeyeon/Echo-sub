@@ -98,11 +98,14 @@ private const val LATEST_TRANSLATION_COLOR = 0xFF8AB4F8.toInt()
  *
  * [onOpenApp]/[onTogglePause]는 다른 앱을 보는 동안 EchoSub를 따로 찾아 열지 않고
  * 오버레이에서 바로 앱으로 돌아가거나 인식을 멈출 수 있게 하기 위한 것이다.
+ * [onAdjustRegion]은 화면 자막 읽기 모드에서만 넘어온다(null이면 버튼 숨김) —
+ * 실시간 자막 창을 옮겼을 때 읽기 영역을 다시 맞추는 진입점이다.
  */
 class SubtitleOverlay(
     private val context: Context,
     private val onOpenApp: () -> Unit,
     private val onTogglePause: () -> Unit,
+    private val onAdjustRegion: (() -> Unit)? = null,
 ) {
 
     /** 히스토리 한 줄. 원문은 상단 영역에, 번역(또는 실패 표시)은 하단 영역에 쓰인다. */
@@ -167,6 +170,13 @@ class SubtitleOverlay(
 
         val openAppButton = view.findViewById<ImageView>(R.id.overlay_btn_open_app)
         openAppButton.setOnClickListener { onOpenApp() }
+
+        val regionButton = view.findViewById<ImageView>(R.id.overlay_btn_region)
+        val adjustRegion = onAdjustRegion
+        if (adjustRegion != null) {
+            regionButton.visibility = View.VISIBLE
+            regionButton.setOnClickListener { adjustRegion() }
+        }
 
         val pauseBtn = view.findViewById<ImageView>(R.id.overlay_btn_toggle_pause)
         pauseBtn.setOnClickListener { onTogglePause() }

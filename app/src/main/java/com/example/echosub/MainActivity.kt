@@ -79,6 +79,7 @@ class MainActivity : ComponentActivity() {
                     languagePair = start.languagePair,
                     translationEngine = start.translationEngine,
                     overlayEnabled = start.overlayEnabled,
+                    subtitleSource = start.subtitleSource,
                 )
                 ContextCompat.startForegroundService(this, serviceIntent)
             } else {

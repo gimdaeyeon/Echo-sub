@@ -20,6 +20,9 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import com.example.echosub.MainActivity
 import com.example.echosub.R
+import com.example.echosub.caption.RegionSelectOverlay
+import com.example.echosub.caption.ScreenCaptionReader
+import com.example.echosub.caption.SubtitleSource
 import com.example.echosub.capture.CaptureFormat
 import com.example.echosub.capture.PcmDownsampler
 import com.example.echosub.capture.PlaybackAudioRecorder
@@ -94,6 +97,7 @@ class AudioCaptureService : Service() {
         private const val EXTRA_LANGUAGE_PAIR = "extra_language_pair"
         private const val EXTRA_TRANSLATION_ENGINE = "extra_translation_engine"
         private const val EXTRA_OVERLAY_ENABLED = "extra_overlay_enabled"
+        private const val EXTRA_SUBTITLE_SOURCE = "extra_subtitle_source"
 
         fun buildStartIntent(
             context: Context,
@@ -105,6 +109,7 @@ class AudioCaptureService : Service() {
             languagePair: LanguagePair,
             translationEngine: TranslationEngine,
             overlayEnabled: Boolean,
+            subtitleSource: SubtitleSource,
         ): Intent = Intent(context, AudioCaptureService::class.java).apply {
             action = ACTION_START
             putExtra(EXTRA_RESULT_CODE, resultCode)
@@ -115,6 +120,7 @@ class AudioCaptureService : Service() {
             putExtra(EXTRA_LANGUAGE_PAIR, languagePair.name)
             putExtra(EXTRA_TRANSLATION_ENGINE, translationEngine.name)
             putExtra(EXTRA_OVERLAY_ENABLED, overlayEnabled)
+            putExtra(EXTRA_SUBTITLE_SOURCE, subtitleSource.name)
         }
 
         fun buildStopIntent(context: Context): Intent =
@@ -157,13 +163,19 @@ class AudioCaptureService : Service() {
     @Volatile
     private var sttClient: SttStreamingClient? = null
 
+    /** 화면 자막 읽기 모드의 원문 소스 — [sttClient]와 동시에 존재하지 않는다. */
+    @Volatile
+    private var captionReader: ScreenCaptionReader? = null
+
     @Volatile
     private var translator: Translator? = null
 
-    // 일시정지 후 재개할 때 새 SttStreamingClient를 그대로 다시 만들기 위해 기억해둔다.
+    // 일시정지 후 재개할 때 같은 구성으로 소스를 다시 만들기 위해 기억해둔다.
     private var activeLanguagePair: LanguagePair? = null
+    private var activeSubtitleSource: SubtitleSource = SubtitleSource.AUDIO_STT
 
     private var overlay: SubtitleOverlay? = null
+    private var regionOverlay: RegionSelectOverlay? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -278,8 +290,11 @@ class AudioCaptureService : Service() {
         if (sttEnabled) {
             val languagePair = enumByName(intent.getStringExtra(EXTRA_LANGUAGE_PAIR), LanguagePair.EN_TO_KO)
             val engine = enumByName(intent.getStringExtra(EXTRA_TRANSLATION_ENGINE), TranslationEngine.ML_KIT)
+            val subtitleSource =
+                enumByName(intent.getStringExtra(EXTRA_SUBTITLE_SOURCE), SubtitleSource.AUDIO_STT)
 
             activeLanguagePair = languagePair
+            activeSubtitleSource = subtitleSource
 
             // 자막은 화면 표시용 TranscriptState와 별개로 여기에 전부 모아 파일로 남긴다
             // (TranscriptState는 최근 50문장만 유지하므로 긴 녹음이면 앞부분이 잘린다).
@@ -303,11 +318,17 @@ class AudioCaptureService : Service() {
                 }
             }
 
-            startSttClient(languagePair)
+            startSubtitleSource()
 
             val overlayEnabled = intent.getBooleanExtra(EXTRA_OVERLAY_ENABLED, false)
             if (overlayEnabled && Settings.canDrawOverlays(this)) {
                 showAndBindOverlay()
+            }
+            // 화면 자막 모드는 시작하자마자 읽기 영역부터 맞추게 한다 — 기본 영역이
+            // 실시간 자막 창과 어긋나 있으면 아무것도 읽히지 않는데, 그 이유가
+            // 화면에 보이지 않으면 "고장"으로 읽힌다.
+            if (subtitleSource == SubtitleSource.SCREEN_CAPTION && Settings.canDrawOverlays(this)) {
+                showRegionOverlay()
             }
         }
 
@@ -412,6 +433,13 @@ class AudioCaptureService : Service() {
             context = this,
             onOpenApp = { openMainActivity() },
             onTogglePause = { toggleSttFromOverlay() },
+            // 화면 자막 모드에서만 영역 재지정 버튼이 생긴다 — 실시간 자막 창을
+            // 옮기면 읽기 영역도 따라 옮겨야 하기 때문.
+            onAdjustRegion = if (activeSubtitleSource == SubtitleSource.SCREEN_CAPTION) {
+                { showRegionOverlay() }
+            } else {
+                null
+            },
         )
         ov.show()
         overlay = ov
@@ -457,36 +485,59 @@ class AudioCaptureService : Service() {
         startActivity(intent)
     }
 
+    /** 화면 자막 읽기 영역 선택 상자를 띄운다 (이미 떠 있으면 무시). 메인 스레드 전용. */
+    private fun showRegionOverlay() {
+        val existing = regionOverlay
+        if (existing?.isShowing == true) return
+        val ov = existing ?: RegionSelectOverlay(
+            context = this,
+            onConfirmed = { /* 영역은 조절 즉시 저장된다 — 확정은 상자를 닫을 뿐 */ },
+        ).also { regionOverlay = it }
+        ov.show()
+    }
+
     /** 오버레이의 일시정지/재개 버튼 — Intent 왕복 없이 서비스 안에서 바로 처리한다. */
     private fun toggleSttFromOverlay() {
-        if (sttClient != null) handlePauseStt() else handleResumeStt()
+        if (sttClient != null || captionReader != null) handlePauseStt() else handleResumeStt()
     }
 
     /**
-     * STT 스트림만 끊는다 (오디오 캡처/WAV 저장은 계속). 무음·대사 없는 구간에서
-     * 사용자가 직접 눌러 STT 스트리밍 사용료를 아끼기 위한 것 — [runCaptureLoop]의
+     * 원문 소스만 끊는다 (오디오 캡처/WAV 저장은 계속). 무음·대사 없는 구간에서
+     * 사용자가 직접 눌러 STT 사용료나 OCR 배터리를 아끼기 위한 것 — [runCaptureLoop]의
      * `sttClient?.sendAudioChunk(...)` 호출은 sttClient가 null이면 그냥 건너뛴다.
      */
     private fun handlePauseStt() {
-        val client = sttClient ?: return
+        val client = sttClient
+        val reader = captionReader
+        if (client == null && reader == null) return
         sttClient = null
-        client.close()
+        captionReader = null
+        client?.close()
+        reader?.close()
         TranscriptState.update {
             it.copy(connectionState = TranscriptState.ConnectionState.PAUSED, interimText = "")
         }
-        Log.i(TAG, "STT 일시정지 (사용자 요청)")
+        Log.i(TAG, "원문 소스 일시정지 (사용자 요청)")
     }
 
     private fun handleResumeStt() {
-        if (sttClient != null) return
+        if (sttClient != null || captionReader != null) return
+        if (activeLanguagePair == null) return
+        startSubtitleSource()
+        Log.i(TAG, "원문 소스 재개 (사용자 요청)")
+    }
+
+    /** 최초 시작과 일시정지 후 재개가 똑같이 "소스 새로 열기"라서 공통으로 뺐다. */
+    private fun startSubtitleSource() {
         val languagePair = activeLanguagePair ?: return
-        startSttClient(languagePair)
-        Log.i(TAG, "STT 재개 (사용자 요청)")
+        when (activeSubtitleSource) {
+            SubtitleSource.AUDIO_STT -> startSttClient(languagePair)
+            SubtitleSource.SCREEN_CAPTION -> startCaptionReader(languagePair)
+        }
     }
 
     /**
-     * 최초 시작과 일시정지 후 재개가 똑같이 "새 스트림 열기"라서 공통으로 뺐다.
-     * 캡처 포맷과 무관하게 STT로 가는 오디오는 항상 16kHz 모노다 —
+     * STT 스트림을 연다. 캡처 포맷과 무관하게 STT로 가는 오디오는 항상 16kHz 모노다 —
      * 원본이 그보다 크면 [runCaptureLoop]가 변환해서 보낸다.
      */
     private fun startSttClient(languagePair: LanguagePair) {
@@ -506,6 +557,26 @@ class AudioCaptureService : Service() {
         }
     }
 
+    /**
+     * 화면 자막 읽기(OCR)를 연다 — 문장이 닫힐 때의 콜백 규약이 STT와 같아서
+     * 번역/자막 기록 이후 경로는 두 소스가 완전히 공유한다.
+     */
+    private fun startCaptionReader(languagePair: LanguagePair) {
+        val proj = projection ?: return
+        val reader = ScreenCaptionReader(
+            context = this,
+            projection = proj,
+            languagePair = languagePair,
+            audioPositionMs = { audioPositionMs() },
+            onFinalResult = { id, text, startMs, endMs ->
+                subtitleRecorder?.add(id, startMs, endMs, text)
+                translateAndUpdate(id, text)
+            },
+        )
+        reader.start()
+        captionReader = reader
+    }
+
     private fun failAndStop(message: String) {
         Log.e(TAG, message)
         CaptureState.update { it.copy(isRunning = false, errorMessage = message) }
@@ -521,6 +592,8 @@ class AudioCaptureService : Service() {
 
         sttClient?.close()
         sttClient = null
+        captionReader?.close()
+        captionReader = null
         activeLanguagePair = null
 
         translator?.close()
@@ -530,6 +603,8 @@ class AudioCaptureService : Service() {
         // 모두 메인 루퍼) — hide()의 WindowManager 호출을 여기서 바로 해도 안전하다.
         overlay?.hide()
         overlay = null
+        regionOverlay?.hide()
+        regionOverlay = null
 
         primaryWriter?.close()
         primaryWriter = null

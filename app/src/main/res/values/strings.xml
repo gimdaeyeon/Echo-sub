@@ -8,4 +8,8 @@
     <string name="overlay_open_app_description">EchoSub 앱으로 돌아가기</string>
     <string name="overlay_pause_description">번역 정지 (녹음은 계속됨)</string>
     <string name="overlay_resume_description">번역 재개</string>
+    <string name="overlay_region_hint">실시간 자막이 표시되는 영역에 맞춰 주세요</string>
+    <string name="overlay_region_confirm_description">이 영역으로 확정</string>
+    <string name="overlay_region_resize_description">영역 크기 조절</string>
+    <string name="overlay_adjust_region_description">자막 읽기 영역 다시 지정</string>
 </resources>

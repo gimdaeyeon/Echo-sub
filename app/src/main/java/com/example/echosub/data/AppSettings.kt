@@ -2,6 +2,8 @@ package com.example.echosub.data
 
 import android.content.Context
 import android.content.SharedPreferences
+import com.example.echosub.caption.CaptionRegion
+import com.example.echosub.caption.SubtitleSource
 import com.example.echosub.capture.CaptureFormat
 import com.example.echosub.overlay.OverlaySettings
 import com.example.echosub.translate.LanguagePair
@@ -54,14 +56,22 @@ object AppSettings {
          * 세로 모드는 항상 위아래로 쌓으므로 이 값과 무관하다 — 가로에서만 의미가 있다.
          */
         val playerLandscapeStacked: Boolean = false,
+        /** 원문을 어디서 얻을지 — 소리를 STT로 인식할지, 화면의 실시간 자막을 OCR로 읽을지. */
+        val subtitleSource: SubtitleSource = SubtitleSource.AUDIO_STT,
+        /** 화면 자막 읽기 모드에서 OCR 할 영역 (화면 비율). 영역 선택 오버레이가 갱신한다. */
+        val captionRegion: CaptionRegion = CaptionRegion.DEFAULT,
     ) {
         val captureFormat: CaptureFormat
             get() = if (hifiRecordingMode) CaptureFormat.HIFI else CaptureFormat.STT_READY
 
         val sttEnabled: Boolean get() = translationEnabled
 
-        /** 오버레이 권한을 실제로 요청해야 하는 조합인지. 번역이 꺼져 있으면 띄울 자막이 없다. */
-        val needsOverlayPermission: Boolean get() = sttEnabled && overlayEnabled
+        /**
+         * 오버레이 권한을 실제로 요청해야 하는 조합인지. 번역이 꺼져 있으면 띄울 자막이 없다.
+         * 화면 자막 읽기 모드는 자막 오버레이를 꺼도 영역 선택 상자가 오버레이라 권한이 필요하다.
+         */
+        val needsOverlayPermission: Boolean
+            get() = sttEnabled && (overlayEnabled || subtitleSource == SubtitleSource.SCREEN_CAPTION)
     }
 
     private const val PREFS_NAME = "echosub_settings"
@@ -74,6 +84,11 @@ object AppSettings {
     private const val KEY_SAVE_16K = "save_16k_companion"
     private const val KEY_TRANSLATION_ENABLED = "translation_enabled"
     private const val KEY_PLAYER_LANDSCAPE_STACKED = "player_landscape_stacked"
+    private const val KEY_SUBTITLE_SOURCE = "subtitle_source"
+    private const val KEY_CAPTION_REGION_LEFT = "caption_region_left"
+    private const val KEY_CAPTION_REGION_TOP = "caption_region_top"
+    private const val KEY_CAPTION_REGION_RIGHT = "caption_region_right"
+    private const val KEY_CAPTION_REGION_BOTTOM = "caption_region_bottom"
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
@@ -102,6 +117,13 @@ object AppSettings {
             save16kCompanion = p.getBoolean(KEY_SAVE_16K, false),
             translationEnabled = p.getBoolean(KEY_TRANSLATION_ENABLED, true),
             playerLandscapeStacked = p.getBoolean(KEY_PLAYER_LANDSCAPE_STACKED, false),
+            subtitleSource = enumByName(p.getString(KEY_SUBTITLE_SOURCE, null), SubtitleSource.AUDIO_STT),
+            captionRegion = CaptionRegion(
+                left = p.getFloat(KEY_CAPTION_REGION_LEFT, CaptionRegion.DEFAULT.left),
+                top = p.getFloat(KEY_CAPTION_REGION_TOP, CaptionRegion.DEFAULT.top),
+                right = p.getFloat(KEY_CAPTION_REGION_RIGHT, CaptionRegion.DEFAULT.right),
+                bottom = p.getFloat(KEY_CAPTION_REGION_BOTTOM, CaptionRegion.DEFAULT.bottom),
+            ).sanitized(),
         )
         OverlaySettings.setTextSize(_values.value.overlayTextSizeSp)
         OverlaySettings.setBoxWidth(_values.value.overlayBoxWidthDp)
@@ -182,6 +204,24 @@ object AppSettings {
         transform = { it.copy(playerLandscapeStacked = stacked) },
         persist = { putBoolean(KEY_PLAYER_LANDSCAPE_STACKED, stacked) },
     )
+
+    fun setSubtitleSource(source: SubtitleSource) = update(
+        transform = { it.copy(subtitleSource = source) },
+        persist = { putString(KEY_SUBTITLE_SOURCE, source.name) },
+    )
+
+    fun setCaptionRegion(region: CaptionRegion) {
+        val sanitized = region.sanitized()
+        update(
+            transform = { it.copy(captionRegion = sanitized) },
+            persist = {
+                putFloat(KEY_CAPTION_REGION_LEFT, sanitized.left)
+                putFloat(KEY_CAPTION_REGION_TOP, sanitized.top)
+                putFloat(KEY_CAPTION_REGION_RIGHT, sanitized.right)
+                putFloat(KEY_CAPTION_REGION_BOTTOM, sanitized.bottom)
+            },
+        )
+    }
 
     private inline fun update(
         transform: (Values) -> Values,
