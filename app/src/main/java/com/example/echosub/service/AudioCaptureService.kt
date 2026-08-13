@@ -25,6 +25,7 @@ import com.example.echosub.capture.PcmDownsampler
 import com.example.echosub.capture.PlaybackAudioRecorder
 import com.example.echosub.capture.WavFileWriter
 import com.example.echosub.capture.bytesPerFrame
+import com.example.echosub.capture.computeRms16BitLe
 import com.example.echosub.data.AppSettings
 import com.example.echosub.device.AppForegroundState
 import com.example.echosub.overlay.OverlaySettings
@@ -54,7 +55,6 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicLong
-import kotlin.math.sqrt
 
 /**
  * Phase 1 파이프라인 전체를 orchestration 하는 Foreground Service.
@@ -307,45 +307,7 @@ class AudioCaptureService : Service() {
 
             val overlayEnabled = intent.getBooleanExtra(EXTRA_OVERLAY_ENABLED, false)
             if (overlayEnabled && Settings.canDrawOverlays(this)) {
-                // handleStart()는 onStartCommand()를 통해 항상 메인 스레드에서 호출되므로
-                // show()를 바로 불러도 안전하다. 이후 갱신은 Dispatchers.Main으로 명시해야 한다 —
-                // WindowManager 호출은 메인 스레드 전용이고, 아래 Flow들은 IO 코루틴에서도 값을 emit한다.
-                val ov = SubtitleOverlay(
-                    context = this,
-                    onOpenApp = { openMainActivity() },
-                    onTogglePause = { toggleSttFromOverlay() },
-                )
-                ov.show()
-                overlay = ov
-
-                serviceScope.launch(Dispatchers.Main) {
-                    OverlaySettings.textSizeSp.collect { ov.setTextSize(it) }
-                }
-                serviceScope.launch(Dispatchers.Main) {
-                    OverlaySettings.boxWidthDp.collect { ov.setBoxWidth(it) }
-                }
-                serviceScope.launch(Dispatchers.Main) {
-                    // 앱 화면에 이미 자막이 보이는 동안에는 오버레이를 숨긴다.
-                    AppForegroundState.isForeground.collect { inForeground -> ov.setVisible(!inForeground) }
-                }
-                serviceScope.launch(Dispatchers.Main) {
-                    // 최근 몇 개만 넘긴다 — 오버레이는 화면 한구석의 작은 창이라
-                    // TranscriptState 전량(최근 50개)을 다 그릴 이유가 없다.
-                    TranscriptState.status
-                        .map { status ->
-                            status.finalEntries.takeLast(OVERLAY_HISTORY_SIZE).map { e ->
-                                SubtitleOverlay.Entry(e.sourceText, e.translatedText, e.translationError)
-                            }
-                        }
-                        .distinctUntilChanged()
-                        .collect { ov.setEntries(it) }
-                }
-                serviceScope.launch(Dispatchers.Main) {
-                    TranscriptState.status
-                        .map { it.connectionState == TranscriptState.ConnectionState.PAUSED }
-                        .distinctUntilChanged()
-                        .collect { ov.setPaused(it) }
-                }
+                showAndBindOverlay()
             }
         }
 
@@ -381,7 +343,7 @@ class AudioCaptureService : Service() {
                 }
 
                 totalBytes += n
-                val rms = computeRms(buffer, n)
+                val rms = computeRms16BitLe(buffer, n)
                 CaptureState.update {
                     it.copy(
                         elapsedMs = System.currentTimeMillis() - startedAt,
@@ -434,24 +396,57 @@ class AudioCaptureService : Service() {
     private fun channelLabel(format: CaptureFormat): String =
         if (format.channelCount == 2) "stereo" else "mono"
 
-    private fun computeRms(buffer: ByteArray, length: Int): Float {
-        if (length < 2) return 0f
-        var sumSquares = 0.0
-        var count = 0
-        var i = 0
-        while (i + 1 < length) {
-            val sample = ((buffer[i + 1].toInt() shl 8) or (buffer[i].toInt() and 0xFF)).toShort()
-            sumSquares += sample.toDouble() * sample.toDouble()
-            count++
-            i += 2
-        }
-        if (count == 0) return 0f
-        val rms = sqrt(sumSquares / count)
-        return (rms / 32768.0).toFloat().coerceIn(0f, 1f)
-    }
-
     private fun handleStop() {
         stopCaptureAndSelf()
+    }
+
+    /**
+     * 오버레이 창을 띄우고 상태 Flow들을 배선한다.
+     *
+     * handleStart()는 onStartCommand()를 통해 항상 메인 스레드에서 호출되므로 show()를
+     * 바로 불러도 안전하다. 이후 갱신은 Dispatchers.Main으로 명시해야 한다 —
+     * WindowManager 호출은 메인 스레드 전용이고, 아래 Flow들은 IO 코루틴에서도 값을 emit한다.
+     */
+    private fun showAndBindOverlay() {
+        val ov = SubtitleOverlay(
+            context = this,
+            onOpenApp = { openMainActivity() },
+            onTogglePause = { toggleSttFromOverlay() },
+        )
+        ov.show()
+        overlay = ov
+
+        serviceScope.launch(Dispatchers.Main) {
+            OverlaySettings.textSizeSp.collect { ov.setTextSize(it) }
+        }
+        serviceScope.launch(Dispatchers.Main) {
+            OverlaySettings.boxWidthDp.collect { ov.setBoxWidth(it) }
+        }
+        serviceScope.launch(Dispatchers.Main) {
+            // 앱 화면에 이미 자막이 보이는 동안에는 오버레이를 숨긴다.
+            AppForegroundState.isForeground.collect { inForeground -> ov.setVisible(!inForeground) }
+        }
+        serviceScope.launch(Dispatchers.Main) {
+            // 최근 몇 개만 넘긴다 — 오버레이는 화면 한구석의 작은 창이라
+            // TranscriptState 전량(최근 50개)을 다 그릴 이유가 없다.
+            // interim(인식 중 텍스트)도 함께 흘린다 — 말이 확정되고 번역이
+            // 돌아오기 전에도 상단 원문 영역에서 글자가 실시간으로 움직여야
+            // 기다림이 "느림"으로 읽히지 않는다.
+            TranscriptState.status
+                .map { status ->
+                    status.finalEntries.takeLast(OVERLAY_HISTORY_SIZE).map { e ->
+                        SubtitleOverlay.Entry(e.sourceText, e.translatedText, e.translationError)
+                    } to status.interimText
+                }
+                .distinctUntilChanged()
+                .collect { (entries, interim) -> ov.setContent(entries, interim) }
+        }
+        serviceScope.launch(Dispatchers.Main) {
+            TranscriptState.status
+                .map { it.connectionState == TranscriptState.ConnectionState.PAUSED }
+                .distinctUntilChanged()
+                .collect { ov.setPaused(it) }
+        }
     }
 
     /** 오버레이의 "앱으로 돌아가기" 버튼 — 다른 앱을 보다가 EchoSub를 따로 찾아 열 필요 없이 바로 전면으로. */

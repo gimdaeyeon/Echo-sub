@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 다크 모드에서는 액티비티 테마도 다크 + 순검정 창 배경으로 맞춘다.
+         이게 없으면 Light 테마의 흰 창이 Compose가 그리기 전에 한 번 번쩍인다 —
+         밤에 불 끄고 쓰는 앱에서 가장 눈에 띄는 순간이 하필 실행 직후가 된다. -->
+    <style name="Theme.EchoSub" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@android:color/black</item>
+        <item name="android:statusBarColor">@android:color/black</item>
+        <item name="android:navigationBarColor">@android:color/black</item>
+    </style>
+</resources>

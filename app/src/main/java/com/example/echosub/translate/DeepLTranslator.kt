@@ -125,9 +125,12 @@ class DeepLTranslator(
             throw e
         } catch (e: Exception) {
             throw TranslationFailedException("DeepL 요청 실패: ${e.message}", e)
-        } finally {
-            connection.disconnect()
         }
+        // finally { disconnect() }를 일부러 두지 않는다 — disconnect()는 소켓 자체를 끊어
+        // 문장마다 TCP+TLS 핸드셰이크를 처음부터 다시 하게 만든다 (모바일에서 수백 ms).
+        // 응답 스트림을 전부 읽고 닫기만 하면(위 .use) HttpURLConnection이 같은 호스트로의
+        // 연결을 풀에 남겨 keep-alive로 재사용한다 — 자막처럼 같은 엔드포인트를 몇 초
+        // 간격으로 계속 부르는 워크로드에 정확히 맞는 동작이다.
     }
 
     /** 선택 파라미터 때문에 거부당했다는 내부 신호 — 밖으로 새지 않고 재시도로 흡수된다. */

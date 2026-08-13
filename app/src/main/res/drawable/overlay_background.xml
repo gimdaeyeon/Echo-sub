@@ -1,5 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
-    <corners android:radius="12dp" />
-    <solid android:color="#B3000000" />
+    <!-- 2단(원문+번역 히스토리)이 되면서 글줄이 많아졌다 — 아래 앱이 비쳐 보이면
+         가독성이 급격히 떨어져 70% → 88% 불투명으로 올렸다. -->
+    <corners android:radius="16dp" />
+    <solid android:color="#E0000000" />
+    <!-- 어두운 화면 위에서는 박스와 배경의 경계가 사라진다 — 옅은 흰 테두리로
+         "여기까지가 자막 창"을 항상 보이게 한다. 진하면 시선을 뺏으므로 30% 흰색. -->
+    <stroke android:width="1dp" android:color="#4DFFFFFF" />
 </shape>

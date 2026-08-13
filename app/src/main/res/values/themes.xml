@@ -1,4 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.EchoSub" parent="android:Theme.Material.Light.NoActionBar" />
+    <!-- Compose가 그리기 전 창 배경 — 라이트 스킴의 background와 맞춰 실행 순간의
+         색 튐을 없앤다. 다크 모드는 values-night가 검정으로 덮는다. -->
+    <style name="Theme.EchoSub" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">#F3F4FB</item>
+    </style>
 </resources>

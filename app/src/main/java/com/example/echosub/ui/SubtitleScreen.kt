@@ -1,5 +1,6 @@
 package com.example.echosub.ui
 
+import android.content.res.Configuration
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -44,6 +45,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -75,6 +77,11 @@ fun SubtitleScreen(
     val entries = transcript.finalEntries
     val listState = rememberLazyListState()
 
+    // 가로 화면은 세로 공간이 절반 이하다 — 같은 크기·간격이면 최신 카드 하나가 화면을
+    // 다 차지해 문장들이 서로 밀치며 겹쳐 보인다. 가로에서는 글자와 간격을 한 단계 줄인다.
+    val compact =
+        LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+
     // 사용자가 이전 내용을 보려고 위로 올려둔 상태에서는 자동 스크롤로 끌어내리지 않는다.
     val stickToBottom by remember {
         derivedStateOf {
@@ -84,7 +91,10 @@ fun SubtitleScreen(
         }
     }
 
-    LaunchedEffect(entries.size, transcript.interimText) {
+    // 최신 문장의 번역이 늦게 도착하면 그 카드가 그 자리에서 커진다 — 문장 수는 그대로라
+    // entries.size만 보면 스크롤이 안 따라가서 커진 만큼 아래가 잘렸다. 번역 텍스트도
+    // 키에 넣어 카드가 자랄 때도 바닥을 따라간다.
+    LaunchedEffect(entries.size, entries.lastOrNull()?.translatedText, transcript.interimText) {
         val target = listState.layoutInfo.totalItemsCount - 1
         if (stickToBottom && target >= 0) listState.animateScrollToItem(target)
     }
@@ -103,14 +113,21 @@ fun SubtitleScreen(
                 LazyColumn(
                     state = listState,
                     modifier = Modifier.fillMaxSize(),
-                    // 하단은 FAB에 가리지 않도록 넉넉히 비운다.
-                    contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 96.dp),
-                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                    // 하단은 FAB에 가리지 않도록 비운다 — 가로에서는 셸이 이미 오른쪽에
+                    // FAB 자리를 내주고 있어 세로만큼 비울 필요가 없다.
+                    contentPadding = PaddingValues(
+                        start = 20.dp,
+                        end = 20.dp,
+                        top = if (compact) 8.dp else 12.dp,
+                        bottom = if (compact) 48.dp else 96.dp,
+                    ),
+                    verticalArrangement = Arrangement.spacedBy(if (compact) 8.dp else 14.dp),
                 ) {
                     items(entries, key = { it.id }) { entry ->
                         TranscriptEntryRow(
                             entry = entry,
                             isLatest = entry.id == latestId,
+                            compact = compact,
                         )
                     }
                     if (transcript.interimText.isNotBlank()) {
@@ -236,7 +253,7 @@ private fun buildBanners(
 }
 
 @Composable
-private fun TranscriptEntryRow(entry: TranscriptState.Entry, isLatest: Boolean) {
+private fun TranscriptEntryRow(entry: TranscriptState.Entry, isLatest: Boolean, compact: Boolean) {
     // 최신 문장은 카드로 들어 올리고, 지난 문장은 왼쪽 세로줄만 남긴다.
     if (isLatest) {
         Surface(
@@ -245,14 +262,18 @@ private fun TranscriptEntryRow(entry: TranscriptState.Entry, isLatest: Boolean) 
             color = MaterialTheme.colorScheme.primaryContainer,
         ) {
             Column(
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier.padding(
+                    horizontal = if (compact) 14.dp else 16.dp,
+                    vertical = if (compact) 9.dp else 14.dp,
+                ),
+                verticalArrangement = Arrangement.spacedBy(if (compact) 3.dp else 6.dp),
             ) {
                 EntryTexts(
                     entry = entry,
                     translatedColor = MaterialTheme.colorScheme.onPrimaryContainer,
                     translatedWeight = FontWeight.SemiBold,
                     sourceColor = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.65f),
+                    compact = compact,
                 )
             }
         }
@@ -267,13 +288,14 @@ private fun TranscriptEntryRow(entry: TranscriptState.Entry, isLatest: Boolean) 
             )
             Column(
                 modifier = Modifier.padding(start = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
+                verticalArrangement = Arrangement.spacedBy(if (compact) 2.dp else 4.dp),
             ) {
                 EntryTexts(
                     entry = entry,
                     translatedColor = MaterialTheme.colorScheme.onSurface,
                     translatedWeight = FontWeight.Normal,
                     sourceColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                    compact = compact,
                 )
             }
         }
@@ -286,11 +308,17 @@ private fun EntryTexts(
     translatedColor: Color,
     translatedWeight: FontWeight,
     sourceColor: Color,
+    compact: Boolean,
 ) {
     when {
         entry.translatedText != null -> Text(
             text = entry.translatedText,
-            style = MaterialTheme.typography.titleMedium,
+            // 가로 화면에서는 본문(번역)을 한 단계 줄여 한눈에 두어 문장이 들어오게 한다.
+            style = if (compact) {
+                MaterialTheme.typography.bodyMedium
+            } else {
+                MaterialTheme.typography.titleMedium
+            },
             fontWeight = translatedWeight,
             color = translatedColor,
         )

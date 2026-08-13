@@ -22,26 +22,77 @@ import com.example.echosub.R
 
 private const val TAG = "SubtitleOverlay"
 
-/** 히스토리 영역이 늘어날 수 있는 최대 높이 — 이보다 길어지면 스크롤로 넘겨본다. */
-private const val HISTORY_MAX_HEIGHT_DP = 220f
+/** 번역 히스토리 영역이 늘어날 수 있는 최대 높이 — 이보다 길어지면 스크롤로 넘겨본다. */
+private const val HISTORY_MAX_HEIGHT_DP = 200f
+
+/**
+ * 히스토리 최대 높이의 화면 비례 상한. [HISTORY_MAX_HEIGHT_DP]는 세로 화면 기준이라
+ * 가로로 눕힌 화면(높이가 절반 이하)에서는 그것만으로 화면 대부분을 덮는다 —
+ * 어느 쪽이든 화면 높이의 이 비율을 넘지 않게 한 번 더 자른다.
+ * (비례 계산은 MaxHeightScrollView가 측정 시점마다 하므로 회전에도 맞는 값이 된다.)
+ */
+private const val HISTORY_MAX_SCREEN_FRACTION = 0.30f
+
+/** 상단 원문 영역의 최대 높이 — 넘치면 스크롤이 되고, 항상 꼬리(지금 들리는 말)를 따라간다. */
+private const val SOURCE_MAX_HEIGHT_DP = 110f
+
+/**
+ * 원문 영역 최대 높이의 화면 비례 상한. 글자 수 상한([MAX_SOURCE_CHARS]/[MAX_INTERIM_CHARS])만으로는
+ * 좁은 박스에서 줄 수가 얼마든지 늘어난다 — 가로 화면에서 원문이 쌓이며 박스를 밀어
+ * 아래 번역 영역이 화면 밖으로 잘리는 것을 높이로 직접 막는다.
+ */
+private const val SOURCE_MAX_SCREEN_FRACTION = 0.22f
+
+/*
+ * 높이 예산 검산 (가로 화면 높이 ~360dp 기준):
+ * 손잡이 ~34 + 원문 min(110, 22%≈79) + 구분선 ~17 + 히스토리 min(200, 30%≈108) + 패딩 20
+ * ≈ 258dp — 하단 여백(8%)을 더해도 화면 높이를 넘지 않는다.
+ */
+
+/**
+ * 인식 중(interim) 텍스트로 상단에 보여줄 최대 글자 수. 서버가 주는 interim은 발화가
+ * 이어지는 동안 상한 없이 길어진다 — 그대로 두면 원문 영역이 화면을 밀고 내려가
+ * 번역 영역이 잘린다. 지금 들리는 말은 꼬리 쪽이므로 앞을 버리고 꼬리만 남긴다.
+ */
+private const val MAX_INTERIM_CHARS = 110
 
 /** 스크롤이 바닥에서 이 거리(dp) 안에 있으면 "바닥에 붙어 있다"고 본다. */
 private const val STICK_TO_BOTTOM_SLOP_DP = 24f
 
-/** 번역이 아직 안 온 문장(원문만 있음)을 표시할 때 쓰는 옅은 흰색. */
-private const val PENDING_COLOR = 0xB3FFFFFF.toInt()
+/** 상단 원문 영역에 함께 남겨둘 최근 확정 문장 수 (인식 중 텍스트는 별도로 추가). */
+private const val SOURCE_HISTORY = 2
+
+/**
+ * 상단 원문 영역의 총 글자 상한. 넘치면 오래된 줄부터 버린다 —
+ * 여러 줄 TextView에서는 `ellipsize="start"`가 동작하지 않아 코드에서 자른다.
+ */
+private const val MAX_SOURCE_CHARS = 160
+
+/** 번역 글자 크기 대비 원문 글자 크기 비율 — 주인공은 번역이다. */
+private const val SOURCE_TEXT_SCALE = 0.72f
+
+/** 인식 중(interim) 텍스트 색 — 아직 확정이 아니라는 것을 옅기로 말한다. */
+private const val INTERIM_COLOR = 0x99FFFFFF.toInt()
 
 /** 번역이 실패한 문장을 표시할 때 쓰는 옅은 빨강 — 원문은 보이되 뭔가 걸렸다는 티만 낸다. */
-private const val PENDING_ERROR_COLOR = 0xB3FFCDD2.toInt()
+private const val ERROR_COLOR = 0xB3FFCDD2.toInt()
+
+/** 가장 최근 번역의 강조색 — 히스토리 속에서 "지금 이 말"을 훑지 않고 찾게 한다. */
+private const val LATEST_TRANSLATION_COLOR = 0xFF8AB4F8.toInt()
 
 /**
  * 다른 앱 위에 뜨는 번역 자막 창.
  *
+ * 2단 구성이다 — **위에 원문(확정 + 인식 중), 아래에 번역 히스토리.** 원문은 말하는
+ * 속도로, 번역은 그보다 1~2초 늦게 도착하므로 두 흐름을 한 칸에 섞으면 번역이 올 때마다
+ * 원문 읽던 자리가 밀린다. 칸을 나누면 각자 자기 속도로 흐르고, 번역이 오기 전에도
+ * 상단에서 글자가 실시간으로 움직이므로 "느리다"는 인상이 사라진다.
+ *
  * Compose 대신 일반 View를 쓴다 — ComposeView를 WindowManager에 직접 붙이려면
  * ViewTreeLifecycleOwner/SavedStateRegistryOwner/ViewModelStoreOwner를 손수 심어줘야 하는데,
- * 이 오버레이는 TextView 하나와 아이콘 두 개가 전부라 그 배선을 감당할 이유가 없다.
+ * 이 오버레이는 TextView 두 개와 아이콘 두 개가 전부라 그 배선을 감당할 이유가 없다.
  *
- * 호출 규칙: [show]/[setEntries]/[setTextSize]/[setBoxWidth]/[setPaused]/[hide] 모두
+ * 호출 규칙: [show]/[setContent]/[setTextSize]/[setBoxWidth]/[setPaused]/[hide] 모두
  * 메인 스레드에서 호출해야 한다 (WindowManager 요구사항).
  * 호출자([com.example.echosub.service.AudioCaptureService])가 Dispatchers.Main에서 부른다.
  *
@@ -54,7 +105,7 @@ class SubtitleOverlay(
     private val onTogglePause: () -> Unit,
 ) {
 
-    /** 히스토리 한 줄. [translatedText]가 없으면 [sourceText]를 옅게 대신 보여준다. */
+    /** 히스토리 한 줄. 원문은 상단 영역에, 번역(또는 실패 표시)은 하단 영역에 쓰인다. */
     data class Entry(
         val sourceText: String,
         val translatedText: String?,
@@ -64,7 +115,10 @@ class SubtitleOverlay(
     private val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
 
     private var rootView: View? = null
+    private var sourceView: TextView? = null
+    private var sourceScrollView: MaxHeightScrollView? = null
     private var textView: TextView? = null
+    private var dividerView: View? = null
     private var scrollView: MaxHeightScrollView? = null
     private var pauseButton: ImageView? = null
     private var layoutParams: WindowManager.LayoutParams? = null
@@ -80,12 +134,24 @@ class SubtitleOverlay(
     fun show() {
         if (rootView != null) return
 
-        val view = LayoutInflater.from(context).inflate(R.layout.overlay_subtitle, null)
+        val view = LayoutInflater.from(context)
+            .inflate(R.layout.overlay_subtitle, null) as PinchToResizeLayout
         val handle = view.findViewById<View>(R.id.overlay_handle)
+        val source = view.findViewById<TextView>(R.id.overlay_source)
+        val sourceScroll = view.findViewById<MaxHeightScrollView>(R.id.overlay_source_scroll)
+        val divider = view.findViewById<View>(R.id.overlay_divider)
         val text = view.findViewById<TextView>(R.id.overlay_text)
         val scroll = view.findViewById<MaxHeightScrollView>(R.id.overlay_scroll)
 
+        // 두 영역 모두 고정 상한 + 화면 비례 상한을 함께 건다. 비례 쪽은 측정 시점마다
+        // 다시 계산되므로(MaxHeightScrollView), 오버레이가 떠 있는 채로 화면을 돌려도
+        // 그 순간의 화면 높이에 맞는 상한이 적용된다.
         scroll.maxHeightPx = dpToPx(HISTORY_MAX_HEIGHT_DP)
+        scroll.maxScreenHeightFraction = HISTORY_MAX_SCREEN_FRACTION
+        sourceScroll.maxHeightPx = dpToPx(SOURCE_MAX_HEIGHT_DP)
+        sourceScroll.maxScreenHeightFraction = SOURCE_MAX_SCREEN_FRACTION
+
+        val screenHeightPx = context.resources.displayMetrics.heightPixels
         val slopPx = dpToPx(STICK_TO_BOTTOM_SLOP_DP)
         scroll.setOnScrollChangeListener { _, _, scrollY, _, _ ->
             // 리스너 파라미터는 View 타입이라 getChildAt이 없다 — ScrollView인 scroll을 직접 쓴다.
@@ -93,7 +159,11 @@ class SubtitleOverlay(
             val maxScroll = ((content?.height ?: 0) - scroll.height).coerceAtLeast(0)
             stickToBottom = maxScroll - scrollY <= slopPx
         }
-        text.text = context.getString(R.string.overlay_waiting)
+
+        // 아직 아무것도 인식되지 않은 상태 — 상단만 대기 문구, 하단(번역 칸)은 숨긴다.
+        source.text = context.getString(R.string.overlay_waiting)
+        divider.visibility = View.GONE
+        scroll.visibility = View.GONE
 
         val openAppButton = view.findViewById<ImageView>(R.id.overlay_btn_open_app)
         openAppButton.setOnClickListener { onOpenApp() }
@@ -117,14 +187,18 @@ class SubtitleOverlay(
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
             PixelFormat.TRANSLUCENT,
         ).apply {
-            gravity = Gravity.TOP or Gravity.START
+            // 아래 모서리를 기준으로 앵커한다 (y = 화면 아래에서 창 아래까지의 거리).
+            // TOP 기준이었을 때는 내용이 길어지면 창이 아래로 자라 화면 밖으로 밀려나
+            // 정작 가장 최근 번역(맨 아래)이 잘렸다 — BOTTOM 기준이면 위로 자란다.
+            gravity = Gravity.BOTTOM or Gravity.START
             x = 0
-            y = (context.resources.displayMetrics.heightPixels * 0.7f).toInt()
+            y = (screenHeightPx * 0.08f).toInt()
         }
 
-        // 드래그/핀치는 손잡이 줄에서만 받는다 — 본문은 이제 자체 스크롤을 가지므로
-        // 박스 전체를 드래그 대상으로 두면 문장을 넘겨보려는 손짓과 창을 옮기려는
-        // 손짓이 같은 제스처(세로 드래그)라 구분할 수 없다.
+        // 드래그는 손잡이 줄에서만 받는다 — 본문은 자체 스크롤을 가지므로 박스 전체를
+        // 드래그 대상으로 두면 문장을 넘겨보려는 손짓과 창을 옮기려는 손짓이 같은
+        // 제스처(세로 드래그)라 구분할 수 없다. 핀치(두 손가락)는 손가락 수로 구분되므로
+        // 루트(PinchToResizeLayout)가 박스 어디서든 받는다.
         attachTouchHandlers(root = view, handle = handle, params = params)
 
         try {
@@ -136,45 +210,94 @@ class SubtitleOverlay(
         }
 
         rootView = view
+        sourceView = source
+        sourceScrollView = sourceScroll
         textView = text
+        dividerView = divider
         scrollView = scroll
         layoutParams = params
         Log.i(TAG, "오버레이 표시 시작")
     }
 
     /**
-     * 최근 문장들을 순서대로 그린다. 번역이 아직 안 온 문장은 원문을 옅게 대신 보여준다 —
-     * 화면이 비어 있는 채로 번역이 끝나길 기다리는 것보다, 인식된 원문이라도 바로 보이는
-     * 편이 "잘 돌아가고 있다"는 확신을 준다. 번역이 도착하면 같은 자리가 또렷한 번역문으로
-     * 바뀐다.
+     * 화면을 통째로 갱신한다 — 상단 원문(최근 확정 [SOURCE_HISTORY]개 + 인식 중 텍스트),
+     * 하단 번역 히스토리(가장 최근 번역만 강조색).
+     *
+     * 인식 중(interim) 텍스트를 상단에 실시간으로 흘리는 것이 핵심이다. 말이 끝나
+     * 확정되고 번역이 돌아오기까지 1~2초가 비는데, 그동안에도 글자가 움직이고 있으면
+     * 기다림이 "느림"으로 읽히지 않는다.
      */
-    fun setEntries(entries: List<Entry>) {
-        val tv = textView ?: return
-        if (entries.isEmpty()) {
-            tv.text = context.getString(R.string.overlay_waiting)
-        } else {
-            val builder = SpannableStringBuilder()
-            entries.forEachIndexed { index, entry ->
-                if (index > 0) builder.append("\n\n")
-                val start = builder.length
-                builder.append(entry.translatedText ?: entry.sourceText)
-                if (entry.translatedText == null) {
-                    val color = if (entry.translationError != null) PENDING_ERROR_COLOR else PENDING_COLOR
-                    builder.setSpan(
-                        ForegroundColorSpan(color),
-                        start, builder.length,
-                        Spannable.SPAN_EXCLUSIVE_EXCLUSIVE,
-                    )
-                    builder.setSpan(
-                        StyleSpan(Typeface.ITALIC),
-                        start, builder.length,
-                        Spannable.SPAN_EXCLUSIVE_EXCLUSIVE,
-                    )
-                }
-            }
-            tv.text = builder
+    fun setContent(entries: List<Entry>, interimText: String) {
+        val source = sourceView ?: return
+
+        // ---- 상단: 원문 ----
+        var sources = entries.takeLast(SOURCE_HISTORY).map { it.sourceText }
+        // 여러 줄 TextView는 ellipsize="start"가 동작하지 않는다 — 오래된 줄부터 코드로 버린다.
+        while (sources.size > 1 && sources.sumOf { it.length } > MAX_SOURCE_CHARS) {
+            sources = sources.drop(1)
         }
-        autoScrollIfStuck()
+        val top = SpannableStringBuilder()
+        sources.forEach { line ->
+            if (top.isNotEmpty()) top.append("\n")
+            top.append(line)
+        }
+        if (interimText.isNotBlank()) {
+            // interim은 발화가 이어지는 동안 상한 없이 길어진다 — 꼬리만 남겨 원문
+            // 영역이 박스를 화면 밖까지 밀어내지 않게 한다.
+            val interim = if (interimText.length > MAX_INTERIM_CHARS) {
+                "…" + interimText.takeLast(MAX_INTERIM_CHARS)
+            } else {
+                interimText
+            }
+            if (top.isNotEmpty()) top.append("\n")
+            top.appendSpanned(
+                interim,
+                ForegroundColorSpan(INTERIM_COLOR),
+                StyleSpan(Typeface.ITALIC),
+            )
+        }
+        source.text = top.ifEmpty { context.getString(R.string.overlay_waiting) }
+        // 원문 영역은 항상 꼬리(지금 들리는 말)를 따라간다 — 높이 상한에 걸려 스크롤이
+        // 생기는 순간에도 새 글자가 보여야 한다. 히스토리와 달리 위로 올려 읽는 용도가
+        // 아니므로 조건 없이 바닥에 붙인다.
+        sourceScrollView?.let { it.post { it.fullScroll(View.FOCUS_DOWN) } }
+
+        // ---- 하단: 번역 히스토리 ----
+        val text = textView ?: return
+        val bottom = SpannableStringBuilder()
+        // 번역이 오갔거나(성공) 실패한 것만 줄이 된다 — 아직 번역 중인 문장은 상단
+        // 원문 영역에 이미 보이고 있으므로 여기 자리를 만들지 않는다.
+        val lines = entries.filter { it.translatedText != null || it.translationError != null }
+        val lastTranslated = lines.indexOfLast { it.translatedText != null }
+        lines.forEachIndexed { index, entry ->
+            if (bottom.isNotEmpty()) bottom.append("\n")
+            when {
+                entry.translatedText == null -> bottom.appendSpanned(
+                    entry.sourceText,
+                    ForegroundColorSpan(ERROR_COLOR),
+                    StyleSpan(Typeface.ITALIC),
+                )
+                index == lastTranslated -> bottom.appendSpanned(
+                    entry.translatedText,
+                    ForegroundColorSpan(LATEST_TRANSLATION_COLOR),
+                )
+                else -> bottom.append(entry.translatedText)
+            }
+        }
+
+        val hasLines = bottom.isNotEmpty()
+        dividerView?.visibility = if (hasLines) View.VISIBLE else View.GONE
+        scrollView?.visibility = if (hasLines) View.VISIBLE else View.GONE
+        if (hasLines) {
+            text.text = bottom
+            autoScrollIfStuck()
+        }
+    }
+
+    private fun SpannableStringBuilder.appendSpanned(text: CharSequence, vararg spans: Any) {
+        val start = length
+        append(text)
+        spans.forEach { setSpan(it, start, length, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE) }
     }
 
     /** 사용자가 위로 스크롤해 지난 내용을 보는 중이 아니면 새 내용이 보이도록 바닥까지 내린다. */
@@ -185,8 +308,10 @@ class SubtitleOverlay(
         }
     }
 
+    /** 사용자 설정은 번역 크기 기준이다 — 원문은 그에 비례해 한 단계 작게 따라간다. */
     fun setTextSize(sp: Float) {
         textView?.setTextSize(TypedValue.COMPLEX_UNIT_SP, sp)
+        sourceView?.setTextSize(TypedValue.COMPLEX_UNIT_SP, sp * SOURCE_TEXT_SCALE)
     }
 
     /** 박스 폭만 바꾼다 — 글자 크기는 [setTextSize]가 따로 담당한다. */
@@ -260,7 +385,10 @@ class SubtitleOverlay(
             Log.w(TAG, "오버레이 창 제거 실패 (이미 제거됐을 수 있음)", e)
         }
         rootView = null
+        sourceView = null
+        sourceScrollView = null
         textView = null
+        dividerView = null
         scrollView = null
         pauseButton = null
         layoutParams = null
@@ -268,28 +396,23 @@ class SubtitleOverlay(
     }
 
     /**
-     * 손잡이([handle])에서만 한 손가락 드래그로 이동, 두 손가락 핀치로 **박스 폭** 조절.
-     * 실제로 옮겨지는 창은 [root]다 — 손잡이는 제스처를 받는 자리일 뿐이다.
+     * 손잡이([handle])에서 한 손가락 드래그로 이동, 박스 **어디서든** 두 손가락 핀치로 폭 조절.
+     *
+     * 핀치를 손잡이 줄에서만 받던 시절에는 28dp 띠에 두 손가락을 올려야 해서 사실상
+     * 확대/축소가 안 됐다 — 지금은 [PinchToResizeLayout]인 루트가 포인터가 둘이 되는
+     * 순간 제스처를 가로채므로, 스크롤/버튼과 충돌 없이 박스 전체가 핀치 대상이 된다.
      *
      * 핀치는 [OverlaySettings.setBoxWidth]만 건드린다 — 예전에는 글자 크기를 바꿔서
      * 박스를 넓히려 하면 글자까지 같이 커졌다. 글자 크기는 설정 화면 슬라이더 전담이다.
      * 실제 폭 반영은 [setBoxWidth]를 구독하는 서비스 쪽 코루틴이 처리하므로
      * 여기서는 상태만 바꾸면 된다.
      */
-    private fun attachTouchHandlers(root: View, handle: View, params: WindowManager.LayoutParams) {
-        var startX = 0
-        var startY = 0
-        var startTouchX = 0f
-        var startTouchY = 0f
-
-        fun resetDragOrigin(event: MotionEvent) {
-            startX = params.x
-            startY = params.y
-            startTouchX = event.rawX
-            startTouchY = event.rawY
-        }
-
-        val scaleDetector = ScaleGestureDetector(
+    private fun attachTouchHandlers(
+        root: PinchToResizeLayout,
+        handle: View,
+        params: WindowManager.LayoutParams,
+    ) {
+        root.scaleDetector = ScaleGestureDetector(
             context,
             object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
                 override fun onScale(detector: ScaleGestureDetector): Boolean {
@@ -301,29 +424,30 @@ class SubtitleOverlay(
             },
         )
 
+        var startX = 0
+        var startY = 0
+        var startTouchX = 0f
+        var startTouchY = 0f
+
+        // 손잡이는 한 손가락 드래그 전담이다 — 두 번째 손가락이 닿으면 루트가 제스처를
+        // 가로채고 여기는 CANCEL을 받으므로, 핀치와 드래그가 섞여 창이 튈 일이 없다.
         handle.setOnTouchListener { _, event ->
-            scaleDetector.onTouchEvent(event)
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
-                    resetDragOrigin(event)
-                    true
-                }
-                MotionEvent.ACTION_POINTER_UP -> {
-                    // 두 손가락 → 한 손가락으로 줄어들 때 기준점을 다시 잡아, 다음 MOVE에서
-                    // 남은 손가락 위치까지의 거리가 그대로 이동량으로 튀지 않게 한다.
-                    resetDragOrigin(event)
+                    startX = params.x
+                    startY = params.y
+                    startTouchX = event.rawX
+                    startTouchY = event.rawY
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
-                    // 핀치 중(포인터 2개 이상)에는 드래그 이동을 하지 않는다 — 동시에 하면 창이 튄다.
-                    if (event.pointerCount == 1 && !scaleDetector.isInProgress) {
-                        params.x = startX + (event.rawX - startTouchX).toInt()
-                        params.y = startY + (event.rawY - startTouchY).toInt()
-                        try {
-                            windowManager.updateViewLayout(root, params)
-                        } catch (e: Exception) {
-                            Log.w(TAG, "드래그 중 창 갱신 실패", e)
-                        }
+                    params.x = startX + (event.rawX - startTouchX).toInt()
+                    // BOTTOM 앵커라 y는 "화면 아래에서의 거리"다 — 손가락이 내려가면 줄어든다.
+                    params.y = startY - (event.rawY - startTouchY).toInt()
+                    try {
+                        windowManager.updateViewLayout(root, params)
+                    } catch (e: Exception) {
+                        Log.w(TAG, "드래그 중 창 갱신 실패", e)
                     }
                     true
                 }

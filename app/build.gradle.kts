@@ -116,4 +116,9 @@ dependencies {
     implementation("com.google.mlkit:translate:17.0.3")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
+
+    // JVM 단위 테스트 — 순수 로직(리샘플러, SRT 직렬화, WAV 헤더, 문장 병합)만 대상이라
+    // 기기/에뮬레이터 없이 gradlew testDebugUnitTest로 돈다.
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3")
 }
