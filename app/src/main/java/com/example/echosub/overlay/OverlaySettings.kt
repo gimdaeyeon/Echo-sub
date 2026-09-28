@@ -9,9 +9,9 @@ import kotlinx.coroutines.flow.asStateFlow
  * [com.example.echosub.service.CaptureState], [com.example.echosub.stt.TranscriptState]와
  * 동일한 싱글턴 StateFlow 패턴.
  *
- * **글자 크기와 박스 폭은 별개다.** 예전에는 오버레이 핀치가 [textSizeSp]를 건드려서
- * 박스를 넓히려 하면 글자까지 같이 커졌다. 지금은 핀치가 [boxWidthDp]만 바꾸고,
- * 글자 크기는 설정 화면 슬라이더가 전담한다.
+ * 오버레이 핀치는 [boxWidthDp]와 [textSizeSp]를 **같은 배율로 함께** 바꾼다 —
+ * PPT에서 모서리를 잡아 늘리듯 비율을 유지한 확대/축소로 느껴지게 하기 위해서다.
+ * 설정 화면 슬라이더로는 두 값을 따로따로 미세 조정할 수 있다.
  */
 object OverlaySettings {
 

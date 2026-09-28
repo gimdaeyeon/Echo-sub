@@ -19,6 +19,7 @@ import android.view.WindowManager
 import android.widget.ImageView
 import android.widget.TextView
 import com.example.echosub.R
+import com.example.echosub.data.AppSettings
 
 private const val TAG = "SubtitleOverlay"
 
@@ -87,6 +88,8 @@ private const val LATEST_TRANSLATION_COLOR = 0xFF8AB4F8.toInt()
  * 속도로, 번역은 그보다 1~2초 늦게 도착하므로 두 흐름을 한 칸에 섞으면 번역이 올 때마다
  * 원문 읽던 자리가 밀린다. 칸을 나누면 각자 자기 속도로 흐르고, 번역이 오기 전에도
  * 상단에서 글자가 실시간으로 움직이므로 "느리다"는 인상이 사라진다.
+ * 원문이 필요 없는 사용자를 위해 상단 영역은 손잡이 줄의 토글로 숨길 수 있다
+ * ("번역만 보기") — 상태는 [AppSettings.setOverlayShowSource]로 저장돼 다음에도 유지된다.
  *
  * Compose 대신 일반 View를 쓴다 — ComposeView를 WindowManager에 직접 붙이려면
  * ViewTreeLifecycleOwner/SavedStateRegistryOwner/ViewModelStoreOwner를 손수 심어줘야 하는데,
@@ -124,8 +127,16 @@ class SubtitleOverlay(
     private var dividerView: View? = null
     private var scrollView: MaxHeightScrollView? = null
     private var pauseButton: ImageView? = null
+    private var sourceToggleButton: ImageView? = null
     private var layoutParams: WindowManager.LayoutParams? = null
     private var isPaused = false
+
+    /** 상단 원문 영역을 보일지 — 손잡이 줄의 토글 버튼이 바꾸고 [AppSettings]에 저장된다. */
+    private var showSource = true
+
+    /** 토글로 다시 그릴 수 있도록 마지막 내용을 들고 있는다. */
+    private var lastEntries: List<Entry> = emptyList()
+    private var lastInterim = ""
 
     /**
      * 사용자가 위로 스크롤해서 지난 문장을 보고 있는 동안에는 새 문장이 와도 끌어내리지
@@ -163,13 +174,14 @@ class SubtitleOverlay(
             stickToBottom = maxScroll - scrollY <= slopPx
         }
 
-        // 아직 아무것도 인식되지 않은 상태 — 상단만 대기 문구, 하단(번역 칸)은 숨긴다.
-        source.text = context.getString(R.string.overlay_waiting)
-        divider.visibility = View.GONE
-        scroll.visibility = View.GONE
-
         val openAppButton = view.findViewById<ImageView>(R.id.overlay_btn_open_app)
         openAppButton.setOnClickListener { onOpenApp() }
+
+        showSource = AppSettings.values.value.overlayShowSource
+        val sourceToggle = view.findViewById<ImageView>(R.id.overlay_btn_source)
+        sourceToggle.setOnClickListener { toggleSourceVisible() }
+        sourceToggleButton = sourceToggle
+        applySourceToggleAppearance(sourceToggle)
 
         val regionButton = view.findViewById<ImageView>(R.id.overlay_btn_region)
         val adjustRegion = onAdjustRegion
@@ -226,6 +238,7 @@ class SubtitleOverlay(
         dividerView = divider
         scrollView = scroll
         layoutParams = params
+        render() // 아직 내용이 없으면 대기 문구가 (토글 상태에 맞는 자리에) 뜬다.
         Log.i(TAG, "오버레이 표시 시작")
     }
 
@@ -238,42 +251,71 @@ class SubtitleOverlay(
      * 기다림이 "느림"으로 읽히지 않는다.
      */
     fun setContent(entries: List<Entry>, interimText: String) {
-        val source = sourceView ?: return
+        lastEntries = entries
+        lastInterim = interimText
+        render()
+    }
 
-        // ---- 상단: 원문 ----
-        var sources = entries.takeLast(SOURCE_HISTORY).map { it.sourceText }
-        // 여러 줄 TextView는 ellipsize="start"가 동작하지 않는다 — 오래된 줄부터 코드로 버린다.
-        while (sources.size > 1 && sources.sumOf { it.length } > MAX_SOURCE_CHARS) {
-            sources = sources.drop(1)
-        }
-        val top = SpannableStringBuilder()
-        sources.forEach { line ->
-            if (top.isNotEmpty()) top.append("\n")
-            top.append(line)
-        }
-        if (interimText.isNotBlank()) {
-            // interim은 발화가 이어지는 동안 상한 없이 길어진다 — 꼬리만 남겨 원문
-            // 영역이 박스를 화면 밖까지 밀어내지 않게 한다.
-            val interim = if (interimText.length > MAX_INTERIM_CHARS) {
-                "…" + interimText.takeLast(MAX_INTERIM_CHARS)
-            } else {
-                interimText
+    /** "번역만 보기" ↔ "원본도 같이 보기" 토글 — 마지막 내용으로 즉시 다시 그린다. */
+    private fun toggleSourceVisible() {
+        showSource = !showSource
+        AppSettings.setOverlayShowSource(showSource)
+        sourceToggleButton?.let { applySourceToggleAppearance(it) }
+        render()
+    }
+
+    private fun applySourceToggleAppearance(button: ImageView) {
+        // 꺼진 상태를 알파로 말한다 — 아이콘을 바꾸는 것보다 "같은 기능의 on/off"로 읽힌다.
+        button.imageAlpha = if (showSource) 255 else 110
+        button.contentDescription = context.getString(
+            if (showSource) R.string.overlay_source_toggle_hide else R.string.overlay_source_toggle_show,
+        )
+    }
+
+    /** [lastEntries]/[lastInterim]과 [showSource] 상태로 두 영역을 그린다. */
+    private fun render() {
+        val source = sourceView ?: return
+        val text = textView ?: return
+        val entries = lastEntries
+
+        // ---- 상단: 원문 (토글로 통째로 숨길 수 있다) ----
+        if (showSource) {
+            var sources = entries.takeLast(SOURCE_HISTORY).map { it.sourceText }
+            // 여러 줄 TextView는 ellipsize="start"가 동작하지 않는다 — 오래된 줄부터 코드로 버린다.
+            while (sources.size > 1 && sources.sumOf { it.length } > MAX_SOURCE_CHARS) {
+                sources = sources.drop(1)
             }
-            if (top.isNotEmpty()) top.append("\n")
-            top.appendSpanned(
-                interim,
-                ForegroundColorSpan(INTERIM_COLOR),
-                StyleSpan(Typeface.ITALIC),
-            )
+            val top = SpannableStringBuilder()
+            sources.forEach { line ->
+                if (top.isNotEmpty()) top.append("\n")
+                top.append(line)
+            }
+            if (lastInterim.isNotBlank()) {
+                // interim은 발화가 이어지는 동안 상한 없이 길어진다 — 꼬리만 남겨 원문
+                // 영역이 박스를 화면 밖까지 밀어내지 않게 한다.
+                val interim = if (lastInterim.length > MAX_INTERIM_CHARS) {
+                    "…" + lastInterim.takeLast(MAX_INTERIM_CHARS)
+                } else {
+                    lastInterim
+                }
+                if (top.isNotEmpty()) top.append("\n")
+                top.appendSpanned(
+                    interim,
+                    ForegroundColorSpan(INTERIM_COLOR),
+                    StyleSpan(Typeface.ITALIC),
+                )
+            }
+            source.text = top.ifEmpty { context.getString(R.string.overlay_waiting) }
+            sourceScrollView?.visibility = View.VISIBLE
+            // 원문 영역은 항상 꼬리(지금 들리는 말)를 따라간다 — 높이 상한에 걸려 스크롤이
+            // 생기는 순간에도 새 글자가 보여야 한다. 히스토리와 달리 위로 올려 읽는 용도가
+            // 아니므로 조건 없이 바닥에 붙인다.
+            sourceScrollView?.let { it.post { it.fullScroll(View.FOCUS_DOWN) } }
+        } else {
+            sourceScrollView?.visibility = View.GONE
         }
-        source.text = top.ifEmpty { context.getString(R.string.overlay_waiting) }
-        // 원문 영역은 항상 꼬리(지금 들리는 말)를 따라간다 — 높이 상한에 걸려 스크롤이
-        // 생기는 순간에도 새 글자가 보여야 한다. 히스토리와 달리 위로 올려 읽는 용도가
-        // 아니므로 조건 없이 바닥에 붙인다.
-        sourceScrollView?.let { it.post { it.fullScroll(View.FOCUS_DOWN) } }
 
         // ---- 하단: 번역 히스토리 ----
-        val text = textView ?: return
         val bottom = SpannableStringBuilder()
         // 번역이 오갔거나(성공) 실패한 것만 줄이 된다 — 아직 번역 중인 문장은 상단
         // 원문 영역에 이미 보이고 있으므로 여기 자리를 만들지 않는다.
@@ -296,11 +338,20 @@ class SubtitleOverlay(
         }
 
         val hasLines = bottom.isNotEmpty()
-        dividerView?.visibility = if (hasLines) View.VISIBLE else View.GONE
-        scrollView?.visibility = if (hasLines) View.VISIBLE else View.GONE
-        if (hasLines) {
-            text.text = bottom
-            autoScrollIfStuck()
+        dividerView?.visibility = if (showSource && hasLines) View.VISIBLE else View.GONE
+        when {
+            hasLines -> {
+                scrollView?.visibility = View.VISIBLE
+                text.text = bottom
+                autoScrollIfStuck()
+            }
+            !showSource -> {
+                // 원본을 숨긴 상태에서 번역까지 없으면 아이콘 줄만 남는다 —
+                // 대기 문구를 번역 칸에 대신 띄운다.
+                scrollView?.visibility = View.VISIBLE
+                text.text = context.getString(R.string.overlay_waiting)
+            }
+            else -> scrollView?.visibility = View.GONE
         }
     }
 
@@ -322,6 +373,19 @@ class SubtitleOverlay(
     fun setTextSize(sp: Float) {
         textView?.setTextSize(TypedValue.COMPLEX_UNIT_SP, sp)
         sourceView?.setTextSize(TypedValue.COMPLEX_UNIT_SP, sp * SOURCE_TEXT_SCALE)
+
+        // 두 영역의 높이 상한도 글자 크기에 비례시킨다 — 핀치로 키울 때 상하로도
+        // 함께 자라야 "비율을 유지한 확대"로 느껴진다. 화면 비례 상한(측정 시점 계산)은
+        // 그대로 남아 있어 아무리 키워도 화면을 넘지는 않는다.
+        val scale = sp / OverlaySettings.DEFAULT_TEXT_SIZE_SP
+        scrollView?.let {
+            it.maxHeightPx = dpToPx(HISTORY_MAX_HEIGHT_DP * scale)
+            it.requestLayout()
+        }
+        sourceScrollView?.let {
+            it.maxHeightPx = dpToPx(SOURCE_MAX_HEIGHT_DP * scale)
+            it.requestLayout()
+        }
     }
 
     /** 박스 폭만 바꾼다 — 글자 크기는 [setTextSize]가 따로 담당한다. */
@@ -401,20 +465,23 @@ class SubtitleOverlay(
         dividerView = null
         scrollView = null
         pauseButton = null
+        sourceToggleButton = null
         layoutParams = null
         Log.i(TAG, "오버레이 숨김")
     }
 
     /**
-     * 손잡이([handle])에서 한 손가락 드래그로 이동, 박스 **어디서든** 두 손가락 핀치로 폭 조절.
+     * 손잡이([handle])에서 한 손가락 드래그로 이동, 박스 **어디서든** 두 손가락 핀치로
+     * 크기 조절.
      *
      * 핀치를 손잡이 줄에서만 받던 시절에는 28dp 띠에 두 손가락을 올려야 해서 사실상
      * 확대/축소가 안 됐다 — 지금은 [PinchToResizeLayout]인 루트가 포인터가 둘이 되는
      * 순간 제스처를 가로채므로, 스크롤/버튼과 충돌 없이 박스 전체가 핀치 대상이 된다.
      *
-     * 핀치는 [OverlaySettings.setBoxWidth]만 건드린다 — 예전에는 글자 크기를 바꿔서
-     * 박스를 넓히려 하면 글자까지 같이 커졌다. 글자 크기는 설정 화면 슬라이더 전담이다.
-     * 실제 폭 반영은 [setBoxWidth]를 구독하는 서비스 쪽 코루틴이 처리하므로
+     * 핀치는 PPT에서 모서리를 잡아 늘리듯 **비율을 유지한 채** 조절한다 — 폭과 글자
+     * 크기를 같은 배율로 함께 바꾸고, 글자 크기가 커지면 [setTextSize]가 높이 상한도
+     * 비례해 키우므로 상하로도 같이 자란다. (폭만 바꾸던 시절에는 "상하 조절이 안 된다"로
+     * 느껴졌다.) 실제 반영은 두 값을 구독하는 서비스 쪽 코루틴이 처리하므로
      * 여기서는 상태만 바꾸면 된다.
      */
     private fun attachTouchHandlers(
@@ -428,6 +495,9 @@ class SubtitleOverlay(
                 override fun onScale(detector: ScaleGestureDetector): Boolean {
                     OverlaySettings.setBoxWidth(
                         OverlaySettings.boxWidthDp.value * detector.scaleFactor,
+                    )
+                    OverlaySettings.setTextSize(
+                        OverlaySettings.textSizeSp.value * detector.scaleFactor,
                     )
                     return true
                 }

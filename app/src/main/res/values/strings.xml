@@ -12,4 +12,6 @@
     <string name="overlay_region_confirm_description">이 영역으로 확정</string>
     <string name="overlay_region_resize_description">영역 크기 조절</string>
     <string name="overlay_adjust_region_description">자막 읽기 영역 다시 지정</string>
+    <string name="overlay_source_toggle_hide">번역만 보기</string>
+    <string name="overlay_source_toggle_show">원본도 같이 보기</string>
 </resources>

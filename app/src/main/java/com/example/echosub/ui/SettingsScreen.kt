@@ -187,8 +187,8 @@ fun SettingsScreen(
                         valueRange = OverlaySettings.MIN_BOX_WIDTH_DP..OverlaySettings.MAX_BOX_WIDTH_DP,
                     )
                     Text(
-                        "박스 폭은 자막을 두 손가락으로 집어서 바로 조절할 수도 있습니다. " +
-                            "글자 크기는 위 슬라이더로만 바뀝니다.",
+                        "자막 박스를 두 손가락으로 집으면 폭과 글자 크기가 비율을 유지하며 " +
+                            "함께 조절됩니다. 위 슬라이더로는 각각 따로 맞출 수 있습니다.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

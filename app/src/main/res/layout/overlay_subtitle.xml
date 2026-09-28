@@ -31,6 +31,19 @@
         android:minHeight="28dp"
         android:layout_marginBottom="6dp">
 
+        <!-- 상단 원문 영역 보이기/숨기기 — "번역만 보기" 토글. 꺼진 상태는 알파로 표시한다. -->
+        <ImageView
+            android:id="@+id/overlay_btn_source"
+            android:layout_width="28dp"
+            android:layout_height="28dp"
+            android:layout_marginEnd="6dp"
+            android:padding="5dp"
+            android:src="@drawable/ic_overlay_source"
+            android:background="@drawable/overlay_icon_button_background"
+            android:clickable="true"
+            android:focusable="true"
+            android:contentDescription="@string/overlay_source_toggle_hide" />
+
         <!-- 화면 자막 모드에서만 보인다 — 실시간 자막 창을 옮겼을 때 읽기 영역을 다시 맞춘다. -->
         <ImageView
             android:id="@+id/overlay_btn_region"

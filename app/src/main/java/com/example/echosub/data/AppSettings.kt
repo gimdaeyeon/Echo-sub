@@ -43,8 +43,10 @@ object AppSettings {
         val translationEngine: TranslationEngine = TranslationEngine.ML_KIT,
         val overlayEnabled: Boolean = true,
         val overlayTextSizeSp: Float = OverlaySettings.DEFAULT_TEXT_SIZE_SP,
-        /** 자막 박스 폭. 글자 크기와 별개로 오버레이 핀치가 이 값만 바꾼다. */
+        /** 자막 박스 폭. 오버레이 핀치는 이 값과 글자 크기를 같은 배율로 함께 바꾼다. */
         val overlayBoxWidthDp: Float = OverlaySettings.DEFAULT_BOX_WIDTH_DP,
+        /** 오버레이에 원문(상단 영역)도 함께 보일지 — 오버레이의 토글 버튼이 바꾼다. */
+        val overlayShowSource: Boolean = true,
         /** 켜면 44.1kHz 스테레오로 저장한다. 용량이 분당 약 10MB로 커진다. */
         val hifiRecordingMode: Boolean = false,
         /** 원음 녹음 시 16kHz 모노 변환본도 함께 저장 (리샘플러 검증용). */
@@ -80,6 +82,7 @@ object AppSettings {
     private const val KEY_OVERLAY_ENABLED = "overlay_enabled"
     private const val KEY_OVERLAY_TEXT_SIZE = "overlay_text_size"
     private const val KEY_OVERLAY_BOX_WIDTH = "overlay_box_width"
+    private const val KEY_OVERLAY_SHOW_SOURCE = "overlay_show_source"
     private const val KEY_HIFI_MODE = "hifi_recording_mode"
     private const val KEY_SAVE_16K = "save_16k_companion"
     private const val KEY_TRANSLATION_ENABLED = "translation_enabled"
@@ -113,6 +116,7 @@ object AppSettings {
             overlayEnabled = p.getBoolean(KEY_OVERLAY_ENABLED, true),
             overlayTextSizeSp = p.getFloat(KEY_OVERLAY_TEXT_SIZE, OverlaySettings.DEFAULT_TEXT_SIZE_SP),
             overlayBoxWidthDp = p.getFloat(KEY_OVERLAY_BOX_WIDTH, OverlaySettings.DEFAULT_BOX_WIDTH_DP),
+            overlayShowSource = p.getBoolean(KEY_OVERLAY_SHOW_SOURCE, true),
             hifiRecordingMode = p.getBoolean(KEY_HIFI_MODE, false),
             save16kCompanion = p.getBoolean(KEY_SAVE_16K, false),
             translationEnabled = p.getBoolean(KEY_TRANSLATION_ENABLED, true),
@@ -184,6 +188,11 @@ object AppSettings {
     /** 저장은 [OverlaySettings] 구독 쪽(bindLiveTunable)에서 처리된다 — 여기서는 단일 소스에만 쓴다. */
     fun setOverlayTextSize(sp: Float) = OverlaySettings.setTextSize(sp)
     fun setOverlayBoxWidth(dp: Float) = OverlaySettings.setBoxWidth(dp)
+
+    fun setOverlayShowSource(show: Boolean) = update(
+        transform = { it.copy(overlayShowSource = show) },
+        persist = { putBoolean(KEY_OVERLAY_SHOW_SOURCE, show) },
+    )
 
     fun setHifiRecordingMode(enabled: Boolean) = update(
         transform = { it.copy(hifiRecordingMode = enabled) },
